@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gradio-chat-agent"
+version = "0.0.1"
+description = "Gradio app with a chatbot agent that controls the components within the app."
+authors = [{ name = "ChenEeHeng", email = "eeheng.chen@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["gradio>=6.2.0,<7", "pip>=25.2", "pyyaml>=6.0.3"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache 2.0 License",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+    "ruff",
+    "pytest-cov",
+    "pytest-asyncio",
+    "pre-commit",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 79
+cache-dir = "/tmp/ruff_cache"
+
+[tool.ruff.lint]
+exclude = ["tests"]
+# SIM212: Checks for if expressions that check against a negated condition.
+# SIM905: Consider using a list literal instead of `str.split`
+ignore = ["C901", "F823", "SIM1", "SIM212", "SIM905"]
+# RUF013: Checks for the use of implicit Optional
+#  in type annotations when the default parameter value is None.
+select = [
+    "C",
+    "E",
+    "F",
+    "I",
+    "W",
+    "RUF013",
+    "UP006",
+    "PERF102",
+    "PLC1802",
+    "PLC0208",
+    "SIM",
+]
+extend-safe-fixes = ["UP006"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+docstring-code-line-length = 79
+
+[tool.ruff.lint.pycodestyle]
+# E501 reports lines that exceed the length of 120.
+max-line-length = 120

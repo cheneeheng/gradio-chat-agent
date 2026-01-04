@@ -1,0 +1,4 @@
+[submodule "agent-tasks"]
+	path = agent-tasks
+	url = https://github.com/cheneeheng/agent-tasks.git
+	branch = gradio-chat-agent

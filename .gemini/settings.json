@@ -1,0 +1,24 @@
+{
+  "context": {
+    "fileName": [
+      "agent-tasks/agent_compact/AGENT_CONTRACT.md",
+      "agent-tasks/agent_compact/NON_GOALS.md",
+      "agent-tasks/agent_compact/REPO_STRUCTURE.md",
+      "agent-tasks/agent_compact/DEV_WORKFLOW.md",
+      "agent-tasks/agent_compact/ENVIRONMENT_PY.md",
+      "agent-tasks/agent_compact/DECISION_LOG.md",
+      "agent-tasks/agent_compact/ARCHITECTURE_DECISIONS.md",
+      "agent-tasks/agent_compact/QUALITY_GATES.md",
+      "agent-tasks/agent_compact/TESTING_PY.md",
+      "agent-tasks/agent_compact/CODING_STYLE_PY.md",
+      "agent-tasks/agent_compact/LINTING_PY.md",
+      "agent-tasks/agent_compact/GIT_WORKFLOW.md",
+      "agent-tasks/agent_compact/OBSERVABILITY.md"
+    ]
+  },
+  "mcpServers": {
+    "gradio": {
+      "url": "https://gradio-docs-mcp.hf.space/gradio_api/mcp/sse"
+    }
+  }
+}

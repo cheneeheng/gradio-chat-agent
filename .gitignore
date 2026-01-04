@@ -1,3 +1,9 @@
+tmp*
+DECISION_LOG.md
+
+# UV
+.uv-cache/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
