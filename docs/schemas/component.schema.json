@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/component.schema.json",
+  "title": "ComponentDeclaration",
+  "description": "Declarative definition of a UI component exposed to the chat agent.",
+  "type": "object",
+  "required": [
+    "component_id",
+    "title",
+    "description",
+    "state_schema",
+    "permissions"
+  ],
+  "properties": {
+    "component_id": {
+      "type": "string",
+      "description": "Stable identifier for the component, used by actions and state snapshots.",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable name of the component."
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed explanation of the component’s purpose and behavior."
+    },
+    "state_schema": {
+      "type": "object",
+      "description": "JSON Schema describing the shape and constraints of the component state."
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Access rules governing how the agent may observe or affect this component.",
+      "required": ["readable", "writable_via_actions_only"],
+      "properties": {
+        "readable": {
+          "type": "boolean",
+          "description": "Whether the agent may read this component’s state."
+        },
+        "writable_via_actions_only": {
+          "type": "boolean",
+          "description": "Must always be true; component state may only be mutated via actions.",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "invariants": {
+      "type": "array",
+      "description": "Human-readable invariants that must always hold for this component.",
+      "items": {
+        "type": "string",
+        "description": "Invariant expressed in natural language."
+      },
+      "default": []
+    },
+    "tags": {
+      "type": "array",
+      "description": "Optional tags for categorization or filtering.",
+      "items": {
+        "type": "string",
+        "description": "Free-form tag."
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false
+}

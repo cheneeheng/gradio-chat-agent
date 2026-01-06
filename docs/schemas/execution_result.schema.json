@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/execution_result.schema.json",
+  "title": "ExecutionResult",
+  "description": "Result of attempting to execute an action.",
+  "type": "object",
+  "required": [
+    "request_id",
+    "action_id",
+    "status",
+    "timestamp",
+    "message",
+    "state_snapshot_id"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "description": "Identifier of the originating intent."
+    },
+    "action_id": {
+      "type": "string",
+      "description": "Identifier of the action that was attempted.",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9]+)*$"
+    },
+    "status": {
+      "type": "string",
+      "description": "Outcome of the execution attempt.",
+      "enum": ["success", "rejected", "failed"]
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 timestamp when execution completed.",
+      "format": "date-time"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable summary of the outcome."
+    },
+    "state_snapshot_id": {
+      "type": "string",
+      "description": "Identifier of the resulting state snapshot."
+    },
+    "state_diff": {
+      "type": "array",
+      "description": "List of state changes applied by the action.",
+      "items": {
+        "$ref": "#/$defs/stateDiffEntry"
+      },
+      "default": []
+    },
+    "error": {
+      "type": "object",
+      "description": "Error details when execution fails or is rejected.",
+      "required": ["code", "detail"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Machine-readable error code."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable error explanation."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["rejected", "failed"] } } },
+      "then": { "required": ["error"] }
+    }
+  ],
+  "$defs": {
+    "stateDiffEntry": {
+      "type": "object",
+      "description": "Single atomic change applied to the state.",
+      "required": ["path", "op"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path in the state that was modified."
+        },
+        "op": {
+          "type": "string",
+          "description": "Type of modification applied.",
+          "enum": ["add", "remove", "replace"]
+        },
+        "value": {
+          "description": "New value applied at the path, if applicable."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

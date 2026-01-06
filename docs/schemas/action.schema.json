@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/action.schema.json",
+  "title": "ActionDeclaration",
+  "description": "Declarative definition of an action that may mutate application state.",
+  "type": "object",
+  "required": [
+    "action_id",
+    "title",
+    "description",
+    "targets",
+    "input_schema",
+    "preconditions",
+    "effects",
+    "permission"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "description": "Stable identifier for the action.",
+      "pattern": "^[a-z0-9]+(\.[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable label for the action."
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed explanation of what the action does."
+    },
+    "targets": {
+      "type": "array",
+      "description": "List of component IDs affected by this action.",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "description": "Target component identifier.",
+        "pattern": "^[a-z0-9]+(\.[a-z0-9]+)*$"
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "description": "JSON Schema describing the inputs required to execute the action."
+    },
+    "preconditions": {
+      "type": "array",
+      "description": "Conditions that must be satisfied before the action may execute.",
+      "items": {
+        "$ref": "#/$defs/precondition"
+      },
+      "default": []
+    },
+    "effects": {
+      "type": "object",
+      "description": "Declarative description of which parts of state may change.",
+      "required": ["may_change"],
+      "properties": {
+        "may_change": {
+          "type": "array",
+          "description": "List of state paths that this action may modify.",
+          "items": {
+            "type": "string",
+            "description": "State path expressed as dotted notation or JSON pointer."
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "permission": {
+      "type": "object",
+      "description": "Permission and risk metadata governing execution.",
+      "required": ["confirmation_required", "risk", "visibility"],
+      "properties": {
+        "confirmation_required": {
+          "type": "boolean",
+          "description": "Whether explicit user confirmation is required before execution."
+        },
+        "risk": {
+          "type": "string",
+          "description": "Risk level associated with executing this action.",
+          "enum": ["low", "medium", "high"]
+        },
+        "visibility": {
+          "type": "string",
+          "description": "Whether this action is visible to end users or only developers.",
+          "enum": ["user", "developer"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "precondition": {
+      "type": "object",
+      "description": "A single precondition that must evaluate to true.",
+      "required": ["id", "description", "expr"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for the precondition.",
+          "pattern": "^[a-z0-9]+(\.[a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable explanation of the precondition."
+        },
+        "expr": {
+          "type": "string",
+          "description": "Deterministic boolean expression evaluated against the state snapshot."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
