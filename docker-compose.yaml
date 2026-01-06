@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  gradio-chat-agent:
+    build: .
+    container_name: gradio-chat-agent
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./audit:/app/audit
+      - ./policies:/app/policies
+      - ./gradio_chat_agent.db:/app/gradio_chat_agent.db
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    restart: unless-stopped
