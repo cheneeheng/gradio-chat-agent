@@ -22,7 +22,7 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
 
-  "postStartCommand": "uv sync --no-install-project",
+  "postStartCommand": "uv sync --no-install-project --all-extras",
 
   "customizations": {
     "vscode": {
