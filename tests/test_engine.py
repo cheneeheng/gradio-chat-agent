@@ -306,3 +306,103 @@ class TestEngine:
         result = engine.execute_intent(pid, intent)
         assert result.status == ExecutionStatus.FAILED
         assert "No handler registered" in result.message
+
+    def test_rate_limit(self, setup):
+        engine, _, repo, pid = setup
+
+        # Set rate limit to 2 per minute
+        repo.set_project_limits(pid, {"limits": {"rate": {"per_minute": 2}}})
+
+        intent = ChatIntent(
+            type=IntentType.ACTION_CALL,
+            request_id="req-1",
+            action_id="demo.counter.set",
+            inputs={"value": 1},
+        )
+
+        # 1st call: Success
+        res1 = engine.execute_intent(pid, intent)
+        assert res1.status == ExecutionStatus.SUCCESS
+
+        # 2nd call: Success
+        res2 = engine.execute_intent(pid, intent)
+        assert res2.status == ExecutionStatus.SUCCESS
+
+        # 3rd call: Should fail
+        res3 = engine.execute_intent(pid, intent)
+        assert res3.status == ExecutionStatus.REJECTED
+        assert "Rate limit exceeded" in res3.message
+
+
+class TestEngineExceptions:
+    @pytest.fixture
+    def setup(self):
+        registry = InMemoryRegistry()
+        repository = InMemoryStateRepository()
+        engine = ExecutionEngine(registry, repository)
+        return engine, registry, repository
+
+    def test_rejection_persistence_error(self, setup):
+        """Test that a DB error during rejection logging doesn't crash the response."""
+        engine, _, repository = setup
+        pid = "proj-err"
+
+        # Mock save_execution to raise an error
+        original_save = repository.save_execution
+        def breaking_save(project_id, result):
+            raise ValueError("DB Crash")
+        repository.save_execution = breaking_save
+
+        intent = ChatIntent(
+            type=IntentType.ACTION_CALL,
+            request_id="req-1",
+            action_id="missing.action",
+        )
+        
+        # Should return REJECTED, not raise ValueError
+        result = engine.execute_intent(pid, intent)
+        assert result.status == ExecutionStatus.REJECTED
+        assert "not found" in result.message
+
+        # Restore
+        repository.save_execution = original_save
+
+    def test_failure_persistence_error(self, setup):
+        """Test that a DB error during failure logging doesn't crash the response."""
+        engine, registry, repository = setup
+        pid = "proj-err"
+        
+        # Register action but no handler (triggers failure)
+        action = ActionDeclaration(
+            action_id="demo.nohandler",
+            title="No Handler",
+            description="Bad",
+            targets=["demo"],
+            input_schema={},
+            permission=ActionPermission(
+                confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER
+            )
+        )
+        registry._actions[action.action_id] = action
+
+        # Mock save_execution to raise an error
+        original_save = repository.save_execution
+        def breaking_save(project_id, result):
+            raise ValueError("DB Crash")
+        repository.save_execution = breaking_save
+
+        intent = ChatIntent(
+            type=IntentType.ACTION_CALL,
+            request_id="req-1",
+            action_id="demo.nohandler",
+        )
+        
+        # Should return FAILED, not raise ValueError
+        result = engine.execute_intent(pid, intent)
+        assert result.status == ExecutionStatus.FAILED
+        assert "No handler registered" in result.message
+
+        # Restore
+        repository.save_execution = original_save
+
+

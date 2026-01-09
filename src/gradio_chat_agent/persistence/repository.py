@@ -5,9 +5,10 @@ a reference in-memory implementation for testing and ephemeral use cases.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 
-from gradio_chat_agent.models.execution_result import ExecutionResult
+from gradio_chat_agent.models.execution_result import ExecutionResult, ExecutionStatus
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 
 
@@ -97,6 +98,41 @@ class StateRepository(ABC):
         """
         pass  # pragma: no cover
 
+    @abstractmethod
+    def get_project_limits(self, project_id: str) -> dict[str, Any]:
+        """Retrieves project limits and policy.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            A dictionary containing limit configuration.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def set_project_limits(self, project_id: str, limits: dict[str, Any]):
+        """Sets project limits.
+
+        Args:
+            project_id: The ID of the project.
+            limits: The limits dictionary.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def count_recent_executions(self, project_id: str, minutes: int) -> int:
+        """Counts successful executions in the last N minutes.
+
+        Args:
+            project_id: The ID of the project.
+            minutes: The time window in minutes.
+
+        Returns:
+            Count of executions.
+        """
+        pass  # pragma: no cover
+
 
 class InMemoryStateRepository(StateRepository):
     """In-memory implementation of the StateRepository.
@@ -110,16 +146,10 @@ class InMemoryStateRepository(StateRepository):
         self._snapshots: dict[str, list[StateSnapshot]] = {}
         self._executions: dict[str, list[ExecutionResult]] = {}
         self._facts: dict[str, dict[str, Any]] = {}  # key: f"{project_id}:{user_id}"
+        self._limits: dict[str, dict[str, Any]] = {}
 
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
-        """Retrieves the most recent state snapshot for a project.
-
-        Args:
-            project_id: The ID of the project.
-
-        Returns:
-            The latest StateSnapshot, or None if not found.
-        """
+        """Retrieves the most recent state snapshot for a project."""
         snapshots = self._snapshots.get(project_id, [])
         if not snapshots:
             return None
@@ -127,23 +157,13 @@ class InMemoryStateRepository(StateRepository):
         return snapshots[-1]
 
     def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
-        """Persists a new state snapshot to the in-memory list.
-
-        Args:
-            project_id: The ID of the project.
-            snapshot: The snapshot object to save.
-        """
+        """Persists a new state snapshot to the in-memory list."""
         if project_id not in self._snapshots:
             self._snapshots[project_id] = []
         self._snapshots[project_id].append(snapshot)
 
     def save_execution(self, project_id: str, result: ExecutionResult):
-        """Persists an execution result to the in-memory list.
-
-        Args:
-            project_id: The ID of the project.
-            result: The execution result to save.
-        """
+        """Persists an execution result to the in-memory list."""
         if project_id not in self._executions:
             self._executions[project_id] = []
         self._executions[project_id].append(result)
@@ -151,15 +171,7 @@ class InMemoryStateRepository(StateRepository):
     def get_execution_history(
         self, project_id: str, limit: int = 100
     ) -> list[ExecutionResult]:
-        """Retrieves the recent execution history.
-
-        Args:
-            project_id: The ID of the project.
-            limit: Maximum number of records to return.
-
-        Returns:
-            A list of ExecutionResult objects, newest first.
-        """
+        """Retrieves the recent execution history."""
         history = self._executions.get(project_id, [])
         return sorted(history, key=lambda x: x.timestamp, reverse=True)[:limit]
 
@@ -182,3 +194,27 @@ class InMemoryStateRepository(StateRepository):
         storage_key = self._get_fact_key(project_id, user_id)
         if storage_key in self._facts:
             self._facts[storage_key].pop(key, None)
+
+    def get_project_limits(self, project_id: str) -> dict[str, Any]:
+        """Retrieves project limits."""
+        return self._limits.get(project_id, {})
+
+    def set_project_limits(self, project_id: str, limits: dict[str, Any]):
+        """Sets project limits."""
+        self._limits[project_id] = limits
+
+    def count_recent_executions(self, project_id: str, minutes: int) -> int:
+        """Counts successful executions in the last N minutes."""
+        history = self._executions.get(project_id, [])
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        # Ensure cutoff is naive if timestamps are naive (which they are by default in pydantic/datetime.now() without tz)
+        # Wait, datetime.now() returns naive local time? No, I'm using now(timezone.utc).
+        # Check ExecutionResult default: datetime.now(). This is naive local time usually.
+        # So I should compare naive to naive.
+        cutoff = cutoff.replace(tzinfo=None)
+        
+        count = 0
+        for ex in history:
+            if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
+                count += 1
+        return count

@@ -91,11 +91,11 @@ class ExecutionEngine:
         # 1. Validation of Intent Structure
         if intent.type != IntentType.ACTION_CALL:
             return self._create_rejection(
-                intent, "Engine only executes action_call intents."
+                project_id, intent, "Engine only executes action_call intents."
             )
 
         if not intent.action_id:
-            return self._create_rejection(intent, "Missing action_id.")
+            return self._create_rejection(project_id, intent, "Missing action_id.")
 
         # 2. Acquire Lock
         lock = self._get_project_lock(project_id)
@@ -112,10 +112,22 @@ class ExecutionEngine:
             action = self.registry.get_action(intent.action_id)
             if not action:
                 return self._create_rejection(
-                    intent, f"Action {intent.action_id} not found."
+                    project_id, intent, f"Action {intent.action_id} not found."
                 )
 
             # 5. Authorization & Governance
+            # Fetch Limits
+            limits = self.repository.get_project_limits(project_id)
+            
+            # Rate Limiting: Check actions/minute
+            rpm_limit = limits.get("limits", {}).get("rate", {}).get("per_minute")
+            if rpm_limit:
+                recent_count = self.repository.count_recent_executions(project_id, minutes=1)
+                if recent_count >= rpm_limit:
+                    return self._create_rejection(
+                        project_id, intent, f"Rate limit exceeded ({rpm_limit}/min).", code="rate_limit"
+                    )
+
             # Role check (Simple implementation: assume 'admin' has all access)
             # In a real system, we'd check action.permission against user_roles
             if (
@@ -123,7 +135,7 @@ class ExecutionEngine:
                 and "admin" not in user_roles
             ):
                 return self._create_rejection(
-                    intent, "Insufficient permissions for high-risk action."
+                    project_id, intent, "Insufficient permissions for high-risk action."
                 )
 
             # Confirmation check
@@ -133,7 +145,7 @@ class ExecutionEngine:
             ):
                 if not intent.confirmed:
                     return self._create_rejection(
-                        intent,
+                        project_id, intent,
                         "Confirmation required.",
                         code="confirmation_required",
                     )
@@ -145,7 +157,7 @@ class ExecutionEngine:
                 )
             except jsonschema.ValidationError as e:
                 return self._create_rejection(
-                    intent, f"Input validation failed: {e.message}"
+                    project_id, intent, f"Input validation failed: {e.message}"
                 )
 
             # 7. Precondition Check
@@ -159,12 +171,12 @@ class ExecutionEngine:
                         precondition.expr, {"__builtins__": {}}, eval_context
                     ):
                         return self._create_rejection(
-                            intent,
+                            project_id, intent,
                             f"Precondition failed: {precondition.description}",
                         )
                 except Exception as e:
                     return self._create_rejection(
-                        intent,
+                        project_id, intent,
                         f"Error evaluating precondition {precondition.id}: {str(e)}",
                     )
 
@@ -172,7 +184,7 @@ class ExecutionEngine:
             handler = self.registry.get_handler(intent.action_id)
             if not handler:
                 return self._create_failure(
-                    intent, f"No handler registered for {intent.action_id}."
+                    project_id, intent, f"No handler registered for {intent.action_id}."
                 )
 
             try:
@@ -191,7 +203,7 @@ class ExecutionEngine:
                     intent.inputs or {}, temp_snapshot
                 )
             except Exception as e:
-                return self._create_failure(intent, f"Handler error: {str(e)}")
+                return self._create_failure(project_id, intent, f"Handler error: {str(e)}")
 
             # 9. Commit
             new_snapshot_id = str(uuid.uuid4())
@@ -221,13 +233,14 @@ class ExecutionEngine:
 
     def _create_rejection(
         self,
+        project_id: str,
         intent: ChatIntent,
         message: str,
         code: str = "policy_violation",
         snapshot_id: str = "unknown",
     ) -> ExecutionResult:
-        """Helper to create a REJECTED execution result."""
-        return ExecutionResult(
+        """Helper to create AND PERSIST a REJECTED execution result."""
+        result = ExecutionResult(
             request_id=intent.request_id,
             action_id=intent.action_id or "unknown",
             status=ExecutionStatus.REJECTED,
@@ -235,16 +248,23 @@ class ExecutionEngine:
             state_snapshot_id=snapshot_id,
             error=ExecutionError(code=code, detail=message),
         )
+        try:
+             self.repository.save_execution(project_id, result)
+        except Exception:
+             # In case of DB error during rejection log, we shouldn't crash the rejection response
+             pass
+        return result
 
     def _create_failure(
         self,
+        project_id: str,
         intent: ChatIntent,
         message: str,
         code: str = "handler_error",
         snapshot_id: str = "unknown",
     ) -> ExecutionResult:
-        """Helper to create a FAILED execution result."""
-        return ExecutionResult(
+        """Helper to create AND PERSIST a FAILED execution result."""
+        result = ExecutionResult(
             request_id=intent.request_id,
             action_id=intent.action_id or "unknown",
             status=ExecutionStatus.FAILED,
@@ -252,3 +272,8 @@ class ExecutionEngine:
             state_snapshot_id=snapshot_id,
             error=ExecutionError(code=code, detail=message),
         )
+        try:
+            self.repository.save_execution(project_id, result)
+        except Exception:
+            pass
+        return result

@@ -5,7 +5,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
-from gradio_chat_agent.persistence.repository import InMemoryStateRepository
+from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.ui.layout import create_ui
@@ -37,7 +37,9 @@ def main():
     registry.register_action(reset_action, reset_handler)
     
     # 2. Setup Persistence
-    repository = InMemoryStateRepository()
+    db_url = os.environ.get("DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3")
+    print(f"Connecting to database: {db_url}")
+    repository = SQLStateRepository(db_url)
     
     # 3. Setup Engine
     engine = ExecutionEngine(registry=registry, repository=repository)
