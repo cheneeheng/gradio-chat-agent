@@ -23,15 +23,13 @@ class StateDiffEntry(BaseModel):
 
     path: str = Field(
         ...,
-        description="Dot-separated path to the changed field (e.g., 'component.value')."
+        description="Dot-separated path to the changed field (e.g., 'component.value').",
     )
     op: StateDiffOp = Field(
-        ...,
-        description="The operation performed (add, remove, replace)."
+        ..., description="The operation performed (add, remove, replace)."
     )
     value: Optional[Any] = Field(
-        None,
-        description="The new value after the operation (if applicable)."
+        None, description="The new value after the operation (if applicable)."
     )
 
 
@@ -45,11 +43,10 @@ class ExecutionError(BaseModel):
 
     code: str = Field(
         ...,
-        description="Machine-readable error code (e.g., 'policy_violation')."
+        description="Machine-readable error code (e.g., 'policy_violation').",
     )
     detail: str = Field(
-        ...,
-        description="Human-readable explanation of the error."
+        ..., description="Human-readable explanation of the error."
     )
 
 
@@ -70,35 +67,32 @@ class ExecutionResult(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     request_id: str = Field(
-        ...,
-        description="The ID of the intent that triggered this execution."
+        ..., description="The ID of the intent that triggered this execution."
     )
     action_id: str = Field(
         ...,
         pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
-        description="The ID of the action attempted."
+        description="The ID of the action attempted.",
     )
     status: ExecutionStatus = Field(
-        ...,
-        description="The final outcome (success, rejected, failed)."
+        ..., description="The final outcome (success, rejected, failed)."
     )
     timestamp: datetime = Field(
         default_factory=datetime.now,
-        description="When the execution completed."
+        description="When the execution completed.",
     )
     message: Optional[str] = Field(
-        None,
-        description="A summary message suitable for display to the user."
+        default=None,
+        description="A summary message suitable for display to the user.",
     )
     state_snapshot_id: str = Field(
-        ...,
-        description="ID of the resulting state snapshot."
+        ..., description="ID of the resulting state snapshot."
     )
     state_diff: list[StateDiffEntry] = Field(
         default_factory=list,
-        description="List of changes applied to the state."
+        description="List of changes applied to the state.",
     )
     error: Optional[ExecutionError] = Field(
-        None,
-        description="Error details if the status is REJECTED or FAILED."
+        default=None,
+        description="Error details if the status is REJECTED or FAILED.",
     )

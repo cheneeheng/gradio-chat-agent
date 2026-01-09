@@ -9,6 +9,17 @@ from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 
 
 def load_policy(file_path: str, project_id: str, db_url: str):
+    """Loads a governance policy from a YAML file into the database.
+
+    This function reads the specified YAML file, parses its content as a
+    governance policy, and persists it for the given project using the
+    SQLStateRepository.
+
+    Args:
+        file_path: The path to the YAML file containing the policy definition.
+        project_id: The unique identifier for the project to apply the policy to.
+        db_url: The SQLAlchemy database connection string.
+    """
     with open(file_path, "r") as f:
         policy = yaml.safe_load(f)
 
@@ -29,7 +40,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--db-url",
-        default=os.environ.get("DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3"),
+        default=os.environ.get(
+            "DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3"
+        ),
         help="Database connection URL",
     )
     args = parser.parse_args()

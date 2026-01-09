@@ -19,7 +19,7 @@ from gradio_chat_agent.models.enums import (
 )
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
-from gradio_chat_agent.persistence.repository import InMemoryStateRepository
+from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 
 

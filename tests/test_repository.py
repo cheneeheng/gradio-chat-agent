@@ -1,4 +1,4 @@
-from gradio_chat_agent.persistence.repository import InMemoryStateRepository
+from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 
 class TestRepository:
     def test_session_facts(self):

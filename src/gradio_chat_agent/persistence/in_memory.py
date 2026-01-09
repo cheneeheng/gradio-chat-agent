@@ -1,21 +1,36 @@
-"""Persistence layer interfaces and implementations.
+"""In-memory implementation of the StateRepository.
 
-This module defines the abstract contract for state persistence.
+This module provides a thread-safe, ephemeral state repository suitable for
+testing and local development.
 """
 
-from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from gradio_chat_agent.models.execution_result import (
     ExecutionResult,
+    ExecutionStatus,
 )
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
+from gradio_chat_agent.persistence.repository import StateRepository
 
 
-class StateRepository(ABC):
-    """Abstract interface for persisting application state and history."""
+class InMemoryStateRepository(StateRepository):
+    """In-memory implementation of the StateRepository.
 
-    @abstractmethod
+    Useful for unit tests and local development where persistence across
+    restarts is not required.
+    """
+
+    def __init__(self):
+        """Initializes the empty in-memory stores."""
+        self._snapshots: dict[str, list[StateSnapshot]] = {}
+        self._executions: dict[str, list[ExecutionResult]] = {}
+        self._facts: dict[
+            str, dict[str, Any]
+        ] = {}  # key: f"{project_id}:{user_id}"
+        self._limits: dict[str, dict[str, Any]] = {}
+
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
 
@@ -25,33 +40,38 @@ class StateRepository(ABC):
         Returns:
             The latest StateSnapshot, or None if the project has no history.
         """
-        pass  # pragma: no cover
+        snapshots = self._snapshots.get(project_id, [])
+        if not snapshots:
+            return None
+        # Assuming last appended is latest
+        return snapshots[-1]
 
-    @abstractmethod
     def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
-        """Persists a new state snapshot.
+        """Persists a new state snapshot to the in-memory list.
 
         Args:
             project_id: The ID of the project to save the snapshot for.
             snapshot: The snapshot object to persist.
         """
-        pass  # pragma: no cover
+        if project_id not in self._snapshots:
+            self._snapshots[project_id] = []
+        self._snapshots[project_id].append(snapshot)
 
-    @abstractmethod
     def save_execution(self, project_id: str, result: ExecutionResult):
-        """Persists an execution result (audit log entry).
+        """Persists an execution result to the in-memory list.
 
         Args:
             project_id: The ID of the project the execution belongs to.
             result: The execution result object to persist.
         """
-        pass  # pragma: no cover
+        if project_id not in self._executions:
+            self._executions[project_id] = []
+        self._executions[project_id].append(result)
 
-    @abstractmethod
     def get_execution_history(
         self, project_id: str, limit: int = 100
     ) -> list[ExecutionResult]:
-        """Retrieves the recent execution history for a project.
+        """Retrieves the recent execution history.
 
         Args:
             project_id: The ID of the project to retrieve history for.
@@ -60,13 +80,23 @@ class StateRepository(ABC):
         Returns:
             A list of ExecutionResult objects, ordered by timestamp descending.
         """
-        pass  # pragma: no cover
+        history = self._executions.get(project_id, [])
+        return sorted(history, key=lambda x: x.timestamp, reverse=True)[:limit]
 
-    @abstractmethod
-    def get_session_facts(
-        self, project_id: str, user_id: str
-    ) -> dict[str, Any]:
-        """Retrieves all session facts for a specific user and project.
+    def _get_fact_key(self, project_id: str, user_id: str) -> str:
+        """Generates a storage key for session facts.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+
+        Returns:
+            A string key in the format '{project_id}:{user_id}'.
+        """
+        return f"{project_id}:{user_id}"
+
+    def get_session_facts(self, project_id: str, user_id: str) -> dict[str, Any]:
+        """Retrieves all session facts.
 
         Args:
             project_id: The ID of the project.
@@ -75,9 +105,8 @@ class StateRepository(ABC):
         Returns:
             A dictionary of key-value facts stored for this user and project.
         """
-        pass  # pragma: no cover
+        return self._facts.get(self._get_fact_key(project_id, user_id), {})
 
-    @abstractmethod
     def save_session_fact(
         self, project_id: str, user_id: str, key: str, value: Any
     ):
@@ -89,9 +118,11 @@ class StateRepository(ABC):
             key: The unique key for the fact.
             value: The value to store for the fact.
         """
-        pass  # pragma: no cover
+        storage_key = self._get_fact_key(project_id, user_id)
+        if storage_key not in self._facts:
+            self._facts[storage_key] = {}
+        self._facts[storage_key][key] = value
 
-    @abstractmethod
     def delete_session_fact(self, project_id: str, user_id: str, key: str):
         """Deletes a session fact.
 
@@ -100,11 +131,12 @@ class StateRepository(ABC):
             user_id: The ID of the user.
             key: The key of the fact to remove.
         """
-        pass  # pragma: no cover
+        storage_key = self._get_fact_key(project_id, user_id)
+        if storage_key in self._facts:
+            self._facts[storage_key].pop(key, None)
 
-    @abstractmethod
     def get_project_limits(self, project_id: str) -> dict[str, Any]:
-        """Retrieves project limits and policy.
+        """Retrieves project limits.
 
         Args:
             project_id: The ID of the project to retrieve limits for.
@@ -112,9 +144,8 @@ class StateRepository(ABC):
         Returns:
             A dictionary containing limit configuration and governance policies.
         """
-        pass  # pragma: no cover
+        return self._limits.get(project_id, {})
 
-    @abstractmethod
     def set_project_limits(self, project_id: str, policy: dict[str, Any]):
         """Sets project limits.
 
@@ -122,9 +153,8 @@ class StateRepository(ABC):
             project_id: The ID of the project to update limits for.
             policy: The policy dictionary containing limits configuration.
         """
-        pass  # pragma: no cover
+        self._limits[project_id] = policy
 
-    @abstractmethod
     def count_recent_executions(self, project_id: str, minutes: int) -> int:
         """Counts successful executions in the last N minutes.
 
@@ -135,4 +165,13 @@ class StateRepository(ABC):
         Returns:
             The number of successful executions found in the specified window.
         """
-        pass  # pragma: no cover
+        history = self._executions.get(project_id, [])
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        # Ensure cutoff is naive if timestamps are naive
+        cutoff = cutoff.replace(tzinfo=None)
+
+        count = 0
+        for ex in history:
+            if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
+                count += 1
+        return count

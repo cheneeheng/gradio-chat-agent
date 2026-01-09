@@ -18,11 +18,10 @@ class ExecutionPlan(BaseModel):
     """
 
     plan_id: str = Field(
-        ...,
-        description="Unique identifier for this plan instance."
+        ..., description="Unique identifier for this plan instance."
     )
     steps: list[ChatIntent] = Field(
         ...,
         min_length=1,
-        description="Ordered list of ChatIntent objects to be executed."
+        description="Ordered list of ChatIntent objects to be executed.",
     )

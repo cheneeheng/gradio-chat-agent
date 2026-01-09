@@ -20,14 +20,13 @@ class StateSnapshot(BaseModel):
     """
 
     snapshot_id: str = Field(
-        ...,
-        description="Unique identifier for this snapshot."
+        ..., description="Unique identifier for this snapshot."
     )
     timestamp: datetime = Field(
         default_factory=datetime.now,
-        description="When the snapshot was created."
+        description="When the snapshot was created.",
     )
     components: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
-        description="Dictionary mapping component IDs to their state objects."
+        description="Dictionary mapping component IDs to their state objects.",
     )

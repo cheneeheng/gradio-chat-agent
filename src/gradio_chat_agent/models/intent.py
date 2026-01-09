@@ -21,9 +21,13 @@ class IntentMedia(BaseModel):
         mime_type: The MIME type of the content (e.g., 'image/png').
     """
 
-    type: MediaType = Field(..., description="The type of media (e.g., image, document).")
+    type: MediaType = Field(
+        ..., description="The type of media (e.g., image, document)."
+    )
     data: str = Field(..., description="Base64 encoded content or URI.")
-    mime_type: str = Field(..., description="The MIME type of the content (e.g., 'image/png').")
+    mime_type: str = Field(
+        ..., description="The MIME type of the content (e.g., 'image/png')."
+    )
 
 
 class ChatIntent(BaseModel):
@@ -48,42 +52,47 @@ class ChatIntent(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    type: IntentType = Field(..., description="The category of intent (Action Call or Clarification).")
-    request_id: str = Field(..., description="Unique identifier for this intent request.")
+    type: IntentType = Field(
+        ...,
+        description="The category of intent (Action Call or Clarification).",
+    )
+    request_id: str = Field(
+        ..., description="Unique identifier for this intent request."
+    )
     timestamp: datetime = Field(
         default_factory=datetime.now,
-        description="Time when the intent was generated."
+        description="Time when the intent was generated.",
     )
     action_id: Optional[str] = Field(
-        None,
+        default=None,
         pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
-        description="The ID of the action to execute (if type is ACTION_CALL)."
+        description="The ID of the action to execute (if type is ACTION_CALL).",
     )
     execution_mode: Optional[ExecutionMode] = Field(
-        None,
-        description="The mode under which this intent was generated."
+        default=None,
+        description="The mode under which this intent was generated.",
     )
     media: Optional[IntentMedia] = Field(
-        None,
-        description="Optional multimodal input associated with the intent."
+        default=None,
+        description="Optional multimodal input associated with the intent.",
     )
     inputs: Optional[dict[str, Any]] = Field(
-        None,
-        description="Dictionary of arguments for the action (if type is ACTION_CALL)."
+        default=None,
+        description="Dictionary of arguments for the action (if type is ACTION_CALL).",
     )
     confirmed: bool = Field(
-        False,
-        description="Whether the user has explicitly confirmed this action."
+        default=False,
+        description="Whether the user has explicitly confirmed this action.",
     )
     question: Optional[str] = Field(
-        None,
-        description="The clarifying question (if type is CLARIFICATION_REQUEST)."
+        default=None,
+        description="The clarifying question (if type is CLARIFICATION_REQUEST).",
     )
     choices: list[str] = Field(
         default_factory=list,
-        description="List of valid options presented to the user (optional)."
+        description="List of valid options presented to the user (optional).",
     )
     trace: dict[str, Any] = Field(
         default_factory=dict,
-        description="Diagnostic metadata for debugging and observability."
+        description="Diagnostic metadata for debugging and observability.",
     )

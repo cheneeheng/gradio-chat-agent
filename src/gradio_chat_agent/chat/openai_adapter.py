@@ -1,63 +1,96 @@
+"""OpenAI-based implementation of the chat agent adapter.
+
+This module provides an adapter that uses OpenAI's Chat Completion API
+(specifically tool calling) to translate user messages into structured
+application intents or plans.
+"""
+
 import json
 import os
-from typing import Any, Optional, Union, cast
+import uuid
+from typing import Any, Optional, Union
 
 from openai import OpenAI
-from pydantic import ValidationError
+from openai.types.chat.chat_completion_content_part_text_param import (
+    ChatCompletionContentPartTextParam,
+)
+from openai.types.chat.chat_completion_function_tool_param import (
+    ChatCompletionFunctionToolParam,
+)
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+)
+from openai.types.chat.chat_completion_message_param import (
+    ChatCompletionMessageParam,
+)
+from openai.types.shared_params.function_definition import FunctionDefinition
 
 from gradio_chat_agent.chat.adapter import AgentAdapter
-from gradio_chat_agent.models.enums import IntentType, ExecutionMode
+from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 
 
 class OpenAIAgentAdapter(AgentAdapter):
-    """Adapter for OpenAI models."""
+    """Adapter for OpenAI models that utilizes function calling."""
 
     def __init__(self, model_name: str = "gpt-4o-mini"):
-        """Initialize the adapter.
+        """Initializes the OpenAI adapter.
 
         Args:
-            model_name: The OpenAI model to use.
+            model_name: The identifier of the OpenAI model to use.
+                Defaults to 'gpt-4o-mini' unless overridden by the
+                OPENAI_MODEL environment variable.
         """
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.model_name = os.environ.get("OPENAI_MODEL", model_name)
 
-    def _registry_to_tools(self, action_registry: dict[str, Any]) -> list[dict]:
-        """Convert the action registry to OpenAI tools format."""
-        tools = []
+    def _registry_to_tools(
+        self, action_registry: dict[str, Any]
+    ) -> list[ChatCompletionFunctionToolParam]:
+        """Converts the action registry into OpenAI tools format.
+
+        Args:
+            action_registry: Dictionary of available action declarations.
+
+        Returns:
+            A list of dictionary objects representing OpenAI tool definitions.
+        """
+        tools: list[ChatCompletionFunctionToolParam] = []
         for action_id, action_def in action_registry.items():
             # OpenAI function schema
-            function_def = {
+            function_def: FunctionDefinition = {
                 "name": action_id,
                 "description": action_def.get("description", ""),
                 "parameters": action_def.get("input_schema", {}),
             }
             tools.append({"type": "function", "function": function_def})
-        
+
         # Add built-in tool for clarification
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": "ask_clarification",
-                "description": "Ask the user a clarifying question when the request is ambiguous or missing information.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The question to ask the user."
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "ask_clarification",
+                    "description": "Ask the user a clarifying question when the request is ambiguous or missing information.",  # noqa: E501
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question to ask the user.",
+                            },
+                            "choices": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional list of choices for the user to pick from.",
+                            },
                         },
-                        "choices": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Optional list of choices for the user to pick from."
-                        }
+                        "required": ["question"],
                     },
-                    "required": ["question"]
-                }
+                },
             }
-        })
+        )
 
         return tools
 
@@ -65,16 +98,25 @@ class OpenAIAgentAdapter(AgentAdapter):
         self,
         component_registry: dict[str, Any],
         state_snapshot: dict[str, Any],
-        execution_mode: str
+        execution_mode: str,
     ) -> str:
-        """Construct the system prompt with context."""
-        
+        """Constructs the system prompt with context for the LLM.
+
+        Args:
+            component_registry: Dictionary of available components.
+            state_snapshot: Current state of all application components.
+            execution_mode: The active operational mode.
+
+        Returns:
+            A string containing the formatted system prompt.
+        """
+
         # Simplify component registry for context (reduce tokens)
         components_summary = {}
         for comp_id, comp_def in component_registry.items():
             components_summary[comp_id] = {
                 "description": comp_def.get("description", ""),
-                "permissions": comp_def.get("permissions", {})
+                "permissions": comp_def.get("permissions", {}),
             }
 
         prompt = f"""You are a governed execution agent.
@@ -105,30 +147,50 @@ CURRENT STATE SNAPSHOT:
         component_registry: dict[str, Any],
         action_registry: dict[str, Any],
         media: Optional[dict[str, Any]] = None,
-        execution_mode: str = "assisted"
+        execution_mode: str = "assisted",
     ) -> Union[ChatIntent, ExecutionPlan]:
-        
-        tools = self._registry_to_tools(action_registry)
-        system_prompt = self._construct_system_prompt(component_registry, state_snapshot, execution_mode)
+        """Translates a user message into a structured intent using OpenAI.
 
-        messages = [{"role": "system", "content": system_prompt}]
-        
-        # Add history
-        # Assuming history is list of dicts with role/content compatible with OpenAI
-        # We might need to filter or adapt generic history if it contains non-OpenAI fields
-        # For now, we assume simple text history.
+        Args:
+            message: Raw text from user.
+            history: List of past conversation turns.
+            state_snapshot: Current project state snapshot.
+            component_registry: Dict of available components.
+            action_registry: Dict of available actions.
+            media: Optional image/document data. Defaults to None.
+            execution_mode: Current execution mode. Defaults to 'assisted'.
+
+        Returns:
+            A ChatIntent or ExecutionPlan object.
+        """
+
+        tools: list[ChatCompletionFunctionToolParam] = self._registry_to_tools(
+            action_registry
+        )
+        system_prompt = self._construct_system_prompt(
+            component_registry, state_snapshot, execution_mode
+        )
+
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt}
+        ]
+
         for turn in history:
-            messages.append({
-                "role": turn.get("role", "user"),
-                "content": str(turn.get("content", ""))
-            })
-            
+            messages.append(
+                {
+                    "role": turn.get("role", "user"),
+                    "content": str(turn.get("content", "")),
+                }
+            )
+
         # Add current user message
-        user_content = [{"type": "text", "text": message}]
+        user_content: list[ChatCompletionContentPartTextParam] = [
+            {"type": "text", "text": message}
+        ]
         if media:
-             # TODO: Handle media if needed, for now just text
-             pass
-             
+            # TODO: Handle media if needed
+            pass
+
         messages.append({"role": "user", "content": user_content})
 
         try:
@@ -136,7 +198,7 @@ CURRENT STATE SNAPSHOT:
                 model=self.model_name,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto" 
+                tool_choice="auto",
             )
         except Exception as e:
             # Fallback for errors
@@ -144,21 +206,16 @@ CURRENT STATE SNAPSHOT:
                 type=IntentType.CLARIFICATION_REQUEST,
                 request_id=f"err_{id(messages)}",
                 question=f"Error communicating with LLM: {str(e)}",
-                execution_mode=ExecutionMode(execution_mode)
+                execution_mode=ExecutionMode(execution_mode),
             )
 
         message_output = completion.choices[0].message
         tool_calls = message_output.tool_calls
 
-        # Generate a request ID (in a real app, use UUID)
-        import uuid
         req_id = str(uuid.uuid4())
 
         if tool_calls:
             # For now, handle the first tool call as the intent
-            # TODO: Support Multi-step plans (ExecutionPlan) if multiple tools are called 
-            # or if a specific 'propose_plan' tool is used.
-            
             tool_call = tool_calls[0]
             function_name = tool_call.function.name
             try:
@@ -172,23 +229,23 @@ CURRENT STATE SNAPSHOT:
                     request_id=req_id,
                     question=arguments.get("question", "Can you clarify?"),
                     choices=arguments.get("choices", []),
-                    execution_mode=ExecutionMode(execution_mode)
+                    execution_mode=ExecutionMode(execution_mode),
                 )
-            
+
             # Otherwise it's an action call
             return ChatIntent(
                 type=IntentType.ACTION_CALL,
                 request_id=req_id,
                 action_id=function_name,
                 inputs=arguments,
-                execution_mode=ExecutionMode(execution_mode)
+                execution_mode=ExecutionMode(execution_mode),
             )
-        
+
         # If no tool called, treat content as clarification or chatter
         content = message_output.content or "I'm not sure what you want to do."
         return ChatIntent(
             type=IntentType.CLARIFICATION_REQUEST,
             request_id=req_id,
             question=content,
-            execution_mode=ExecutionMode(execution_mode)
+            execution_mode=ExecutionMode(execution_mode),
         )

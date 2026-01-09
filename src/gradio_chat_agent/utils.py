@@ -23,9 +23,11 @@ def compute_state_diff(
         old_state: The original state dictionary.
         new_state: The new state dictionary.
         path_prefix: Internal recursion helper to build dotted paths.
+            Defaults to an empty string.
 
     Returns:
-        A list of StateDiffEntry objects describing the changes.
+        A list of StateDiffEntry objects describing the changes between the
+        two states.
     """
     diffs = []
 

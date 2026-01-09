@@ -12,7 +12,7 @@ import os
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.enums import ExecutionMode
-from gradio_chat_agent.persistence.repository import InMemoryStateRepository
+from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 from gradio_chat_agent.registry.system_actions import (
     memory_component,

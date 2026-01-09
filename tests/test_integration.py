@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
-from gradio_chat_agent.persistence.repository import InMemoryStateRepository
+from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.enums import IntentType, ExecutionMode

@@ -80,7 +80,7 @@ class ExecutionEngine:
             project_id: The ID of the project context.
             intent: The structured intent object to execute.
             user_roles: List of roles held by the requesting user.
-                        Defaults to ['viewer'].
+                Defaults to ['viewer'].
 
         Returns:
             An ExecutionResult object indicating success, rejection, or failure.
@@ -95,7 +95,9 @@ class ExecutionEngine:
             )
 
         if not intent.action_id:
-            return self._create_rejection(project_id, intent, "Missing action_id.")
+            return self._create_rejection(
+                project_id, intent, "Missing action_id."
+            )
 
         # 2. Acquire Lock
         lock = self._get_project_lock(project_id)
@@ -118,14 +120,21 @@ class ExecutionEngine:
             # 5. Authorization & Governance
             # Fetch Limits
             limits = self.repository.get_project_limits(project_id)
-            
+
             # Rate Limiting: Check actions/minute
-            rpm_limit = limits.get("limits", {}).get("rate", {}).get("per_minute")
+            rpm_limit = (
+                limits.get("limits", {}).get("rate", {}).get("per_minute")
+            )
             if rpm_limit:
-                recent_count = self.repository.count_recent_executions(project_id, minutes=1)
+                recent_count = self.repository.count_recent_executions(
+                    project_id, minutes=1
+                )
                 if recent_count >= rpm_limit:
                     return self._create_rejection(
-                        project_id, intent, f"Rate limit exceeded ({rpm_limit}/min).", code="rate_limit"
+                        project_id,
+                        intent,
+                        f"Rate limit exceeded ({rpm_limit}/min).",
+                        code="rate_limit",
                     )
 
             # Role check (Simple implementation: assume 'admin' has all access)
@@ -135,7 +144,9 @@ class ExecutionEngine:
                 and "admin" not in user_roles
             ):
                 return self._create_rejection(
-                    project_id, intent, "Insufficient permissions for high-risk action."
+                    project_id,
+                    intent,
+                    "Insufficient permissions for high-risk action.",
                 )
 
             # Confirmation check
@@ -145,7 +156,8 @@ class ExecutionEngine:
             ):
                 if not intent.confirmed:
                     return self._create_rejection(
-                        project_id, intent,
+                        project_id,
+                        intent,
                         "Confirmation required.",
                         code="confirmation_required",
                     )
@@ -171,12 +183,14 @@ class ExecutionEngine:
                         precondition.expr, {"__builtins__": {}}, eval_context
                     ):
                         return self._create_rejection(
-                            project_id, intent,
+                            project_id,
+                            intent,
                             f"Precondition failed: {precondition.description}",
                         )
                 except Exception as e:
                     return self._create_rejection(
-                        project_id, intent,
+                        project_id,
+                        intent,
                         f"Error evaluating precondition {precondition.id}: {str(e)}",
                     )
 
@@ -184,7 +198,9 @@ class ExecutionEngine:
             handler = self.registry.get_handler(intent.action_id)
             if not handler:
                 return self._create_failure(
-                    project_id, intent, f"No handler registered for {intent.action_id}."
+                    project_id,
+                    intent,
+                    f"No handler registered for {intent.action_id}.",
                 )
 
             try:
@@ -203,7 +219,9 @@ class ExecutionEngine:
                     intent.inputs or {}, temp_snapshot
                 )
             except Exception as e:
-                return self._create_failure(project_id, intent, f"Handler error: {str(e)}")
+                return self._create_failure(
+                    project_id, intent, f"Handler error: {str(e)}"
+                )
 
             # 9. Commit
             new_snapshot_id = str(uuid.uuid4())
@@ -239,7 +257,19 @@ class ExecutionEngine:
         code: str = "policy_violation",
         snapshot_id: str = "unknown",
     ) -> ExecutionResult:
-        """Helper to create AND PERSIST a REJECTED execution result."""
+        """Helper to create AND PERSIST a REJECTED execution result.
+
+        Args:
+            project_id: The ID of the project context.
+            intent: The structured intent object that was rejected.
+            message: A human-readable explanation of why the intent was rejected.
+            code: A machine-readable error code. Defaults to 'policy_violation'.
+            snapshot_id: The ID of the state snapshot at the time of rejection.
+                Defaults to 'unknown'.
+
+        Returns:
+            An ExecutionResult object with REJECTED status.
+        """
         result = ExecutionResult(
             request_id=intent.request_id,
             action_id=intent.action_id or "unknown",
@@ -249,10 +279,10 @@ class ExecutionEngine:
             error=ExecutionError(code=code, detail=message),
         )
         try:
-             self.repository.save_execution(project_id, result)
+            self.repository.save_execution(project_id, result)
         except Exception:
-             # In case of DB error during rejection log, we shouldn't crash the rejection response
-             pass
+            # In case of DB error during rejection log, we shouldn't crash the rejection response
+            pass
         return result
 
     def _create_failure(
@@ -263,7 +293,19 @@ class ExecutionEngine:
         code: str = "handler_error",
         snapshot_id: str = "unknown",
     ) -> ExecutionResult:
-        """Helper to create AND PERSIST a FAILED execution result."""
+        """Helper to create AND PERSIST a FAILED execution result.
+
+        Args:
+            project_id: The ID of the project context.
+            intent: The structured intent object that failed.
+            message: A human-readable explanation of the failure.
+            code: A machine-readable error code. Defaults to 'handler_error'.
+            snapshot_id: The ID of the state snapshot at the time of failure.
+                Defaults to 'unknown'.
+
+        Returns:
+            An ExecutionResult object with FAILED status.
+        """
         result = ExecutionResult(
             request_id=intent.request_id,
             action_id=intent.action_id or "unknown",

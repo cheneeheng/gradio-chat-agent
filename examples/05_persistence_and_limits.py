@@ -38,14 +38,10 @@ def run_example():
 
     # 3. Define and Apply Policy
     # Limit: 2 actions per minute
-    print(f"Setting rate limit for project '{project_id}' to 2 actions/minute.")
-    policy = {
-        "limits": {
-            "rate": {
-                "per_minute": 2
-            }
-        }
-    }
+    print(
+        f"Setting rate limit for project '{project_id}' to 2 actions/minute."
+    )
+    policy = {"limits": {"rate": {"per_minute": 2}}}
     repository.set_project_limits(project_id, policy)
 
     # 4. Attempt Executions
@@ -58,10 +54,12 @@ def run_example():
             type=IntentType.ACTION_CALL,
             request_id=str(uuid.uuid4()),
             action_id="demo.counter.set",
-            inputs={"value": i}
+            inputs={"value": i},
         )
 
-        result = engine.execute_intent(project_id, intent, user_roles=["admin"])
+        result = engine.execute_intent(
+            project_id, intent, user_roles=["admin"]
+        )
 
         if result.status == ExecutionStatus.SUCCESS:
             print(f"Result: SUCCESS (Msg: {result.message})")

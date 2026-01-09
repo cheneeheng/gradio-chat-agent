@@ -19,14 +19,13 @@ class ComponentPermissions(BaseModel):
     """
 
     readable: bool = Field(
-        ...,
-        description="Whether the agent can read the component's state."
+        ..., description="Whether the agent can read the component's state."
     )
     writable_via_actions_only: Literal[True] = Field(
-        True,
+        default=True,
         description=(
             "Enforces that state changes must happen through actions (always True)."
-        )
+        ),
     )
 
 
@@ -46,29 +45,23 @@ class ComponentDeclaration(BaseModel):
     component_id: str = Field(
         ...,
         pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
-        description="Unique, dot-notation identifier (e.g., 'demo.counter')."
+        description="Unique, dot-notation identifier (e.g., 'demo.counter').",
     )
-    title: str = Field(
-        ...,
-        description="Short human-readable name."
-    )
+    title: str = Field(..., description="Short human-readable name.")
     description: str = Field(
-        ...,
-        description="Explanation of the component's purpose."
+        ..., description="Explanation of the component's purpose."
     )
     state_schema: dict[str, Any] = Field(
         ...,
-        description="JSON Schema describing the component's state structure."
+        description="JSON Schema describing the component's state structure.",
     )
     permissions: ComponentPermissions = Field(
-        ...,
-        description="Access control rules."
+        ..., description="Access control rules."
     )
     invariants: list[str] = Field(
         default_factory=list,
-        description="List of natural language invariants for the component."
+        description="List of natural language invariants for the component.",
     )
     tags: list[str] = Field(
-        default_factory=list,
-        description="Optional categorization tags."
+        default_factory=list, description="Optional categorization tags."
     )

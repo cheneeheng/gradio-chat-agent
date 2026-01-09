@@ -1,5 +1,12 @@
+"""Abstract base classes for chat agent adapters.
+
+This module defines the interface that all chat agent adapters must implement
+to translate user messages and application state into structured intents
+or multi-step execution plans.
+"""
+
 from abc import ABC, abstractmethod
-from typing import Union, Optional, Any
+from typing import Any, Optional, Union
 
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
@@ -21,21 +28,27 @@ class AgentAdapter(ABC):
         component_registry: dict[str, Any],
         action_registry: dict[str, Any],
         media: Optional[dict[str, Any]] = None,
-        execution_mode: str = "assisted"
+        execution_mode: str = "assisted",
     ) -> Union[ChatIntent, ExecutionPlan]:
-        """
-        Converts a user message and context into a structured intent or plan.
+        """Converts a user message and context into a structured intent or plan.
 
         Args:
             message: Raw text from user.
-            history: List of past conversation turns.
-            state_snapshot: Current project state snapshot (JSON/Dict).
-            component_registry: Dict of available components.
-            action_registry: Dict of available actions.
-            media: Optional image/document data.
-            execution_mode: Current execution mode (interactive, assisted, autonomous).
+            history: List of past conversation turns. Each turn is typically a
+                dictionary with 'role' and 'content' keys.
+            state_snapshot: Current project state snapshot as a JSON-serializable
+                dictionary.
+            component_registry: Dictionary of all available components and their
+                declarations.
+            action_registry: Dictionary of all available actions and their
+                declarations.
+            media: Optional multimodal data such as image or document data.
+                Defaults to None.
+            execution_mode: The operational mode for agent execution (e.g.,
+                'interactive', 'assisted', 'autonomous'). Defaults to 'assisted'.
 
         Returns:
-            A ChatIntent (single action/question) or ExecutionPlan (multi-step).
+            A ChatIntent object representing a single action or clarification
+            request, or an ExecutionPlan representing a sequence of actions.
         """
         pass  # pragma: no cover
