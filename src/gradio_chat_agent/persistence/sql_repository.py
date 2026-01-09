@@ -19,6 +19,7 @@ from gradio_chat_agent.persistence.models import (
     ProjectLimits,
     SessionFact,
     Snapshot,
+    Webhook,
 )
 from gradio_chat_agent.persistence.repository import StateRepository
 
@@ -72,6 +73,25 @@ class SQLStateRepository(StateRepository):
             if not row:
                 return None
 
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+            )
+
+    def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
+        """Retrieves a specific state snapshot by ID.
+
+        Args:
+            snapshot_id: The unique ID of the snapshot.
+
+        Returns:
+            The StateSnapshot if found, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            row = session.get(Snapshot, snapshot_id)
+            if not row:
+                return None
             return StateSnapshot(
                 snapshot_id=row.id,
                 timestamp=row.timestamp,
@@ -308,3 +328,25 @@ class SQLStateRepository(StateRepository):
                 )
             )
             return session.execute(stmt).scalar()
+
+    def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a webhook configuration by ID.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+
+        Returns:
+            A dictionary containing webhook details.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if not webhook:
+                return None
+            return {
+                "id": webhook.id,
+                "project_id": webhook.project_id,
+                "action_id": webhook.action_id,
+                "secret": webhook.secret,
+                "inputs_template": webhook.inputs_template,
+                "enabled": webhook.enabled,
+            }

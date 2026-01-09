@@ -22,6 +22,7 @@ from gradio_chat_agent.models.execution_result import (
     ExecutionResult,
 )
 from gradio_chat_agent.models.intent import ChatIntent
+from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
@@ -64,6 +65,36 @@ class ExecutionEngine:
             if project_id not in self.project_locks:
                 self.project_locks[project_id] = threading.Lock()
             return self.project_locks[project_id]
+
+    def execute_plan(
+        self,
+        project_id: str,
+        plan: ExecutionPlan,
+        user_roles: Optional[list[str]] = None,
+    ) -> list[ExecutionResult]:
+        """Executes a multi-step plan sequentially.
+
+        Args:
+            project_id: The ID of the project context.
+            plan: The execution plan containing multiple steps.
+            user_roles: List of roles held by the requesting user.
+
+        Returns:
+            A list of ExecutionResult objects for all attempted steps.
+        """
+        results = []
+        for step in plan.steps:
+            # Execute the step
+            result = self.execute_intent(
+                project_id=project_id, intent=step, user_roles=user_roles
+            )
+            results.append(result)
+
+            # Abort on failure or rejection
+            if result.status != ExecutionStatus.SUCCESS:
+                break
+
+        return results
 
     def execute_intent(
         self,
@@ -244,6 +275,72 @@ class ExecutionEngine:
                 state_diff=computed_diffs,
             )
 
+            self.repository.save_snapshot(project_id, new_snapshot)
+            self.repository.save_execution(project_id, result)
+
+            return result
+
+    def revert_to_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> ExecutionResult:
+        """Reverts the project state to a specific snapshot.
+
+        This creates a new snapshot with the content of the target snapshot
+        and logs a 'system.revert' execution.
+
+        Args:
+            project_id: The ID of the project.
+            snapshot_id: The ID of the snapshot to revert to.
+
+        Returns:
+            The execution result of the revert operation.
+        """
+        lock = self._get_project_lock(project_id)
+        with lock:
+            # 1. Validation
+            target_snapshot = self.repository.get_snapshot(snapshot_id)
+            if not target_snapshot:
+                return self._create_failure(
+                    project_id,
+                    ChatIntent(
+                        type=IntentType.ACTION_CALL,
+                        request_id=str(uuid.uuid4()),
+                        action_id="system.revert",
+                    ),
+                    f"Snapshot {snapshot_id} not found.",
+                    code="not_found",
+                )
+
+            current_snapshot = self.repository.get_latest_snapshot(project_id)
+            if not current_snapshot:
+                # Should not happen if there is a history to revert to
+                current_snapshot = StateSnapshot(
+                    snapshot_id="init", components={}
+                )
+
+            # 2. Revert Logic
+            new_snapshot_id = str(uuid.uuid4())
+            new_components = copy.deepcopy(target_snapshot.components)
+
+            new_snapshot = StateSnapshot(
+                snapshot_id=new_snapshot_id,
+                components=new_components,
+            )
+
+            diffs = compute_state_diff(
+                current_snapshot.components, new_components
+            )
+
+            result = ExecutionResult(
+                request_id=str(uuid.uuid4()),
+                action_id="system.revert",
+                status=ExecutionStatus.SUCCESS,
+                message=f"Reverted state to snapshot {snapshot_id}",
+                state_snapshot_id=new_snapshot_id,
+                state_diff=diffs,
+            )
+
+            # 3. Persistence
             self.repository.save_snapshot(project_id, new_snapshot)
             self.repository.save_execution(project_id, result)
 

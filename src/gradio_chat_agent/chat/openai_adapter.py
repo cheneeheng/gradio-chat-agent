@@ -17,9 +17,6 @@ from openai.types.chat.chat_completion_content_part_text_param import (
 from openai.types.chat.chat_completion_function_tool_param import (
     ChatCompletionFunctionToolParam,
 )
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-)
 from openai.types.chat.chat_completion_message_param import (
     ChatCompletionMessageParam,
 )
