@@ -5,7 +5,7 @@ a reference in-memory implementation for testing and ephemeral use cases.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any
 
 from gradio_chat_agent.models.execution_result import ExecutionResult
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
@@ -61,6 +61,42 @@ class StateRepository(ABC):
         """
         pass  # pragma: no cover
 
+    @abstractmethod
+    def get_session_facts(self, project_id: str, user_id: str) -> dict[str, Any]:
+        """Retrieves all session facts for a specific user and project.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+
+        Returns:
+            A dictionary of key-value facts.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def save_session_fact(self, project_id: str, user_id: str, key: str, value: Any):
+        """Saves or updates a session fact.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+            key: The fact key.
+            value: The fact value.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def delete_session_fact(self, project_id: str, user_id: str, key: str):
+        """Deletes a session fact.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+            key: The fact key.
+        """
+        pass  # pragma: no cover
+
 
 class InMemoryStateRepository(StateRepository):
     """In-memory implementation of the StateRepository.
@@ -73,6 +109,7 @@ class InMemoryStateRepository(StateRepository):
         """Initializes the empty in-memory stores."""
         self._snapshots: dict[str, list[StateSnapshot]] = {}
         self._executions: dict[str, list[ExecutionResult]] = {}
+        self._facts: dict[str, dict[str, Any]] = {}  # key: f"{project_id}:{user_id}"
 
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
@@ -125,3 +162,23 @@ class InMemoryStateRepository(StateRepository):
         """
         history = self._executions.get(project_id, [])
         return sorted(history, key=lambda x: x.timestamp, reverse=True)[:limit]
+
+    def _get_fact_key(self, project_id: str, user_id: str) -> str:
+        return f"{project_id}:{user_id}"
+
+    def get_session_facts(self, project_id: str, user_id: str) -> dict[str, Any]:
+        """Retrieves all session facts."""
+        return self._facts.get(self._get_fact_key(project_id, user_id), {})
+
+    def save_session_fact(self, project_id: str, user_id: str, key: str, value: Any):
+        """Saves or updates a session fact."""
+        storage_key = self._get_fact_key(project_id, user_id)
+        if storage_key not in self._facts:
+            self._facts[storage_key] = {}
+        self._facts[storage_key][key] = value
+
+    def delete_session_fact(self, project_id: str, user_id: str, key: str):
+        """Deletes a session fact."""
+        storage_key = self._get_fact_key(project_id, user_id)
+        if storage_key in self._facts:
+            self._facts[storage_key].pop(key, None)
