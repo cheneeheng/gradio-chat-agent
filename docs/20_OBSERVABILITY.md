@@ -39,11 +39,11 @@ The **Audit Log** is the persistent, immutable history of *what happened to the 
 }
 ```
 
-## 3. Metrics (Prometheus)
+## 3. Metrics (Planned)
 
-The application should expose a `/metrics` endpoint (via `prometheus_client`) for scraping.
+The application is architected to expose a `/metrics` endpoint (e.g., via `prometheus_client`) for scraping in future versions.
 
-### Key Indicators
+### Planned Indicators
 
 | Metric Name | Type | Labels | Description |
 | :--- | :--- | :--- | :--- |
@@ -53,9 +53,9 @@ The application should expose a `/metrics` endpoint (via `prometheus_client`) fo
 | `llm_token_usage_total` | Counter | `model` | Tokens used by the Agent layer. |
 | `active_projects` | Gauge | - | Number of projects with recent activity. |
 
-## Alerting Rules
+## Alerting Rules (Planned)
 
-Recommended alerts for PagerDuty/OpsGenie:
+Recommended alerts for PagerDuty/OpsGenie once metrics are implemented:
 
 1.  **High Failure Rate**: `rate(engine_execution_total{status="failed"}[5m]) > 5%`
 2.  **Budget Exhaustion**: `budget_used / budget_limit > 90%` (User-facing alert, not necessarily SRE).

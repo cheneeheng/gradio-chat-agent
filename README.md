@@ -21,7 +21,7 @@ The chat interface is **not authoritative**. It is a convenience layer on top of
 - **Deterministic execution**
   - Every state change is logged, replayable, and auditable
 - **Governed autonomy**
-  - Budgets, rate limits, approvals, and execution windows prevent runaway behavior
+  - Budgets and rate limits prevent runaway behavior
 
 ---
 
@@ -87,10 +87,9 @@ Enforces:
 
 - User × project roles (`viewer`, `operator`, `admin`)
 - Project archival state
-- Execution windows (time‑boxed permissions)
-- Rate limits and quotas
-- Project‑level and action‑level budgets
-- Risk‑weighted execution costs
+- Rate limits (RPM/RPH)
+- Policy-defined budget thresholds
+- Risk‑weighted execution validation
 - Human approval workflows
 - Replayability and audit logging
 
@@ -104,9 +103,8 @@ Enforces:
 ### 5. Observability
 
 - JSONL audit logs
-- Metrics
-- Budget usage tracking
-- Forecasting and alerts
+- Execution history with state diffs
+- Budget tracking (Work in Progress)
 
 ---
 
@@ -121,27 +119,23 @@ Enforces:
 
 ---
 
-## Governance Features
+## Governance Features (Implemented & Planned)
 
-- **Budgets**
-  - Project‑level
-  - Per‑action
-  - Risk‑weighted costs
-- **Rate limits**
-  - Per minute / hour / day
-- **Approvals**
-  - Cost‑based escalation
+- **Rate limits** (Implemented)
+  - Per minute / hour
+- **Approvals** (Implemented)
+  - Risk-based confirmation gates
   - Role‑aware
-- **Execution windows**
-  - Time‑boxed permissions
-- **Forecasting**
-  - Predict budget exhaustion
-- **Alerts**
-  - Webhook notifications on thresholds
-- **Adaptive limits**
-  - Optional self‑tuning within bounds
-- **Policy‑as‑code**
+- **Policy‑as‑code** (Implemented)
   - YAML‑defined governance rules
+- **Budgets** (In Progress)
+  - Project‑level daily budgets
+  - Risk‑weighted costs
+- **Execution windows** (Planned)
+  - Time‑boxed permissions
+- **Forecasting & Alerts** (Planned)
+  - Predict budget exhaustion
+  - Webhook notifications on thresholds
 
 ---
 
@@ -163,9 +157,8 @@ Gradio exposes all execution and audit endpoints as authenticated HTTP APIs.
 This allows:
 
 - Headless automation
-- CI integration
 - External tooling
-- Webhooks and schedulers
+- Webhooks and schedulers (Management API)
 
 All API calls go through the same execution engine.
 
@@ -186,16 +179,15 @@ This project exists to show how to do it **correctly**.
 
 ## Status
 
-This system is **architecturally complete**.
+This system's **core architecture is complete**.
 
-What remains is integration work:
+The focus is now on hardening the governance layer and expanding integration:
 
-- Identity federation (OIDC)
-- Secrets management
-- Distributed execution
-- UI polish
-
-None of these require changes to the core engine.
+- **Identity federation (OIDC)**
+- **Background Worker** for Schedulers
+- **Encrypted Secrets Management**
+- **Execution Windows** and daily budget enforcement
+- **UI polish**
 
 ---
 
