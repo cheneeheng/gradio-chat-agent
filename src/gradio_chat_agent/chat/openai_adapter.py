@@ -8,7 +8,7 @@ application intents or plans.
 import json
 import os
 import uuid
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 from openai import OpenAI
 from openai.types.chat.chat_completion_content_part_text_param import (
@@ -216,7 +216,9 @@ CURRENT STATE SNAPSHOT:
 
         if tool_calls:
             # For now, handle the first tool call as the intent
-            tool_call = tool_calls[0]
+            tool_call = cast(
+                ChatCompletionMessageFunctionToolCall, tool_calls[0]
+            )
             function_name = tool_call.function.name
             try:
                 arguments = json.loads(tool_call.function.arguments)

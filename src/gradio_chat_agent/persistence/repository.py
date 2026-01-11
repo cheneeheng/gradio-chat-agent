@@ -28,6 +28,18 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
+        """Retrieves a specific state snapshot by ID.
+
+        Args:
+            snapshot_id: The unique ID of the snapshot.
+
+        Returns:
+            The StateSnapshot if found, otherwise None.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
         """Persists a new state snapshot.
 
@@ -135,4 +147,19 @@ class StateRepository(ABC):
         Returns:
             The number of successful executions found in the specified window.
         """
+
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a webhook configuration by ID.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+
+        Returns:
+            A dictionary containing webhook details (id, project_id, action_id,
+                secret, template).
+        """
+
         pass  # pragma: no cover

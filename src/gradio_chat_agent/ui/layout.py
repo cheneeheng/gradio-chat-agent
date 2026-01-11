@@ -7,10 +7,12 @@ execution.
 
 import gradio as gr
 
+from gradio_chat_agent.api.endpoints import ApiEndpoints
 from gradio_chat_agent.chat.adapter import AgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
+from gradio_chat_agent.models.plan import ExecutionPlan
 
 
 DEFAULT_PROJECT_ID = "default_project"
@@ -27,13 +29,14 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
     Returns:
         A Gradio gr.Blocks object containing the application layout.
     """
+    api = ApiEndpoints(engine)
 
     with gr.Blocks(title="Gradio Chat Agent") as demo:
         # State variables
         project_id_state = gr.State(DEFAULT_PROJECT_ID)
         user_id_state = gr.State(DEFAULT_USER_ID)
-        # History format: list of [user_msg, bot_msg] or compatible with Chatbot
         history_state = gr.State([])
+        pending_plan_state = gr.State(None)
 
         with gr.Row():
             # --- Left Sidebar ---
@@ -111,8 +114,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             return (
                 state,
                 {},
+                reg_info,
             )
-            reg_info
 
         # Initial Load
         demo.load(
@@ -130,7 +133,6 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             # 2. Fetch context
             snapshot = engine.repository.get_latest_snapshot(pid)
             if not snapshot:
-                # Should not happen if initialized, but handle it
                 from gradio_chat_agent.models.state_snapshot import (
                     StateSnapshot,
                 )
@@ -147,10 +149,6 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 for a in engine.registry.list_actions()
             }
 
-            # 3. Call Agent
-            # Convert history to format expected by adapter (list of dicts) if needed
-            # Gradio 'messages' type is already [{'role': 'user', 'content': ''}...]
-
             try:
                 result = adapter.message_to_intent_or_plan(
                     message=message,
@@ -163,27 +161,61 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             except Exception as e:
                 err_msg = f"Agent Error: {str(e)}"
                 new_history.append({"role": "assistant", "content": err_msg})
-                return "", new_history, state_dict, {"error": str(e)}
+                # Return empty plan/pending state
+                return (
+                    "",
+                    new_history,
+                    state_dict,
+                    {"error": str(e)},
+                    gr.update(),
+                    gr.update(visible=False),
+                    None,
+                )
 
             # 4. Handle Result
-            if isinstance(result, ChatIntent):
+            if isinstance(result, ExecutionPlan):
+                # Handle Plan
+                plan_md = f"## Proposed Plan (ID: {result.plan_id})\n"
+                for i, step in enumerate(result.steps):
+                    plan_md += (
+                        f"{i + 1}. **{step.action_id}**: `{step.inputs}`\n"
+                    )
+
+                new_history.append(
+                    {
+                        "role": "assistant",
+                        "content": "I have proposed a plan. Please review it below.",
+                    }
+                )
+
+                return (
+                    "",
+                    new_history,
+                    state_dict,
+                    {},
+                    plan_md,
+                    gr.update(visible=True),
+                    result,
+                )
+
+            elif isinstance(result, ChatIntent):
                 intent = result
                 if intent.type == IntentType.CLARIFICATION_REQUEST:
                     new_history.append(
                         {"role": "assistant", "content": intent.question}
                     )
-                    return "", new_history, state_dict, {}
+                    return (
+                        "",
+                        new_history,
+                        state_dict,
+                        {},
+                        "No plan pending.",
+                        gr.update(visible=False),
+                        None,
+                    )
 
                 elif intent.type == IntentType.ACTION_CALL:
-                    # Execute!
-                    # For MVP, we assume confirmed=True if mode is Autonomous, else...
-                    # Wait, docs say "Chat UI... Never executes actions directly" -> Agent Proposes.
-                    # But the flow in 02_GETTING_STARTED says "Set counter to 5" -> "Engine applies action".
-
-                    # If mode is INTERACTIVE, we should technically ask for confirmation for EVERYTHING?
-                    # Or just rely on 'confirmation_required' flag?
-
-                    # Let's try to execute.
+                    # Execute single action
                     exec_result = engine.execute_intent(
                         pid, intent, user_roles=["admin"]
                     )
@@ -194,61 +226,236 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             {"role": "assistant", "content": resp}
                         )
 
-                        # Fetch new state
                         new_snapshot = engine.repository.get_latest_snapshot(
                             pid
                         )
                         new_state = (
                             new_snapshot.components if new_snapshot else {}
                         )
+
                         return (
                             "",
                             new_history,
                             new_state,
                             exec_result.state_diff,
+                            "No plan pending.",
+                            gr.update(visible=False),
+                            None,
                         )
 
                     elif (
                         exec_result.error
                         and exec_result.error.code == "confirmation_required"
                     ):
-                        # Special flow for confirmation
-                        # We could present a button. For now, just text.
                         resp = f"Action `{intent.action_id}` requires confirmation. Please type 'confirm' to proceed."
-                        # We need to STORE this intent in pending state?
-                        # For MVP, just let user retry saying "confirm set counter to 5" (Agent handles it?)
                         new_history.append(
                             {"role": "assistant", "content": resp}
                         )
-                        return "", new_history, state_dict, {}
+                        return (
+                            "",
+                            new_history,
+                            state_dict,
+                            {},
+                            "No plan pending.",
+                            gr.update(visible=False),
+                            None,
+                        )
 
                     else:
                         resp = f"Action Failed/Rejected: {exec_result.message}"
                         new_history.append(
                             {"role": "assistant", "content": resp}
                         )
-                        return "", new_history, state_dict, {}
+                        return (
+                            "",
+                            new_history,
+                            state_dict,
+                            {},
+                            "No plan pending.",
+                            gr.update(visible=False),
+                            None,
+                        )
 
-            else:
-                # Plan logic (skip for now or basic msg)
-                new_history.append(
-                    {
-                        "role": "assistant",
-                        "content": "Multi-step plans not fully implemented in UI yet.",
-                    }
-                )
-                return "", new_history, state_dict, {}
+            return (
+                "",
+                new_history,
+                state_dict,
+                {},
+                "No plan pending.",
+                gr.update(visible=False),
+                None,
+            )
 
         submit_btn.click(
             on_submit,
             inputs=[msg_input, chatbot, project_id_state, execution_mode],
-            outputs=[msg_input, chatbot, state_json, diff_json],
+            outputs=[
+                msg_input,
+                chatbot,
+                state_json,
+                diff_json,
+                plan_display,
+                plan_group,
+                pending_plan_state,
+            ],
         )
 
         msg_input.submit(
             on_submit,
             inputs=[msg_input, chatbot, project_id_state, execution_mode],
-            outputs=[msg_input, chatbot, state_json, diff_json],
+            outputs=[
+                msg_input,
+                chatbot,
+                state_json,
+                diff_json,
+                plan_display,
+                plan_group,
+                pending_plan_state,
+            ],
         )
+
+        # Plan Approval Handlers
+        def on_approve_plan(plan, history, pid):
+            if not plan:
+                return (
+                    history,
+                    {},
+                    {},
+                    "No plan",
+                    gr.update(visible=False),
+                    None,
+                )
+
+            results = engine.execute_plan(pid, plan, user_roles=["admin"])
+
+            summary = "### Plan Execution Result\n"
+            final_diff = []
+            for res in results:
+                status_icon = "✅" if res.status == "success" else "❌"
+                summary += (
+                    f"- {status_icon} **{res.action_id}**: {res.message}\n"
+                )
+                if res.state_diff:
+                    final_diff.extend(res.state_diff)
+
+            history.append({"role": "assistant", "content": summary})
+
+            snapshot = engine.repository.get_latest_snapshot(pid)
+            new_state = snapshot.components if snapshot else {}
+
+            return (
+                history,
+                new_state,
+                final_diff,
+                "Plan Executed.",
+                gr.update(visible=False),
+                None,
+            )
+
+        approve_plan_btn.click(
+            on_approve_plan,
+            inputs=[pending_plan_state, chatbot, project_id_state],
+            outputs=[
+                chatbot,
+                state_json,
+                diff_json,
+                plan_display,
+                plan_group,
+                pending_plan_state,
+            ],
+        )
+
+        def on_reject_plan(history):
+            history.append({"role": "assistant", "content": "Plan rejected."})
+            return history, "Plan rejected.", gr.update(visible=False), None
+
+        reject_plan_btn.click(
+            on_reject_plan,
+            inputs=[chatbot],
+            outputs=[chatbot, plan_display, plan_group, pending_plan_state],
+        )
+
+        # --- API Endpoints ---
+        with gr.Group(visible=False):
+            # execute_action
+            api_project_id = gr.Textbox(label="project_id")
+            api_action_id = gr.Textbox(label="action_id")
+            api_inputs = gr.JSON(label="inputs")
+            api_mode = gr.Textbox(label="mode")
+            api_confirmed = gr.Checkbox(label="confirmed")
+            api_result = gr.JSON(label="result")
+
+            gr.Button("Execute API").click(
+                fn=api.execute_action,
+                inputs=[
+                    api_project_id,
+                    api_action_id,
+                    api_inputs,
+                    api_mode,
+                    api_confirmed,
+                ],
+                outputs=[api_result],
+                api_name="execute_action",
+            )
+
+            # execute_plan
+            api_plan_project_id = gr.Textbox(label="project_id")
+            api_plan_json = gr.JSON(label="plan")
+            api_plan_result = gr.JSON(label="result")
+
+            gr.Button("Execute Plan API").click(
+                fn=api.execute_plan,
+                inputs=[api_plan_project_id, api_plan_json, api_mode],
+                outputs=[api_plan_result],
+                api_name="execute_plan",
+            )
+
+            # revert_snapshot
+            api_revert_project_id = gr.Textbox(label="project_id")
+            api_revert_snapshot_id = gr.Textbox(label="snapshot_id")
+            api_revert_result = gr.JSON(label="result")
+
+            gr.Button("Revert Snapshot API").click(
+                fn=api.revert_snapshot,
+                inputs=[api_revert_project_id, api_revert_snapshot_id],
+                outputs=[api_revert_result],
+                api_name="revert_snapshot",
+            )
+
+            # webhook_execute
+            api_wh_id = gr.Textbox(label="webhook_id")
+            api_wh_payload = gr.JSON(label="payload")
+            api_wh_signature = gr.Textbox(label="signature")
+            api_wh_result = gr.JSON(label="result")
+
+            gr.Button("Webhook Execute API").click(
+                fn=api.webhook_execute,
+                inputs=[api_wh_id, api_wh_payload, api_wh_signature],
+                outputs=[api_wh_result],
+                api_name="webhook_execute",
+            )
+
+            # get_registry
+            api_reg_project_id = gr.Textbox(label="project_id")
+            api_reg_result = gr.JSON(label="registry")
+
+            gr.Button("Get Registry API").click(
+                fn=api.get_registry,
+                inputs=[api_reg_project_id],
+                outputs=[api_reg_result],
+                api_name="get_registry",
+            )
+
+            # get_audit_log
+            api_audit_project_id = gr.Textbox(label="project_id")
+            api_audit_limit = gr.Number(label="limit", value=100)
+            api_audit_result = gr.JSON(label="audit_log")
+
+            gr.Button("Get Audit Log API").click(
+                fn=api.get_audit_log,
+                inputs=[api_audit_project_id, api_audit_limit],
+                outputs=[api_audit_result],
+                api_name="get_audit_log",
+            )
 
     return demo

@@ -30,6 +30,7 @@ class InMemoryStateRepository(StateRepository):
             str, dict[str, Any]
         ] = {}  # key: f"{project_id}:{user_id}"
         self._limits: dict[str, dict[str, Any]] = {}
+        self._webhooks: dict[str, dict[str, Any]] = {}
 
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
@@ -45,6 +46,22 @@ class InMemoryStateRepository(StateRepository):
             return None
         # Assuming last appended is latest
         return snapshots[-1]
+
+    def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
+        """Retrieves a specific state snapshot by ID.
+
+        Args:
+            snapshot_id: The unique ID of the snapshot.
+
+        Returns:
+            The StateSnapshot if found, otherwise None.
+        """
+        # Search all projects (inefficient but fine for in-memory/test)
+        for snapshots in self._snapshots.values():
+            for snap in snapshots:
+                if snap.snapshot_id == snapshot_id:
+                    return snap
+        return None
 
     def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
         """Persists a new state snapshot to the in-memory list.
@@ -95,7 +112,9 @@ class InMemoryStateRepository(StateRepository):
         """
         return f"{project_id}:{user_id}"
 
-    def get_session_facts(self, project_id: str, user_id: str) -> dict[str, Any]:
+    def get_session_facts(
+        self, project_id: str, user_id: str
+    ) -> dict[str, Any]:
         """Retrieves all session facts.
 
         Args:
@@ -175,3 +194,14 @@ class InMemoryStateRepository(StateRepository):
             if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
                 count += 1
         return count
+
+    def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a webhook configuration by ID.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+
+        Returns:
+            A dictionary containing webhook details.
+        """
+        return self._webhooks.get(webhook_id)

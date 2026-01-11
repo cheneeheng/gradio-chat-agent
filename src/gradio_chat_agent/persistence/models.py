@@ -62,6 +62,7 @@ class Project(Base):
     limits: Mapped[Optional["ProjectLimits"]] = relationship(
         back_populates="project", uselist=False
     )
+    webhooks: Mapped[list["Webhook"]] = relationship(back_populates="project")
 
 
 class ProjectLimits(Base):
@@ -89,6 +90,32 @@ class ProjectLimits(Base):
     )
 
     project: Mapped["Project"] = relationship(back_populates="limits")
+
+
+class Webhook(Base):
+    """Represents a registered webhook for external automation.
+
+    Attributes:
+        id: Unique identifier for the webhook (can be URL-safe string).
+        project_id: The project this webhook belongs to.
+        action_id: The action to execute.
+        secret: Secret key for verifying signatures.
+        inputs_template: Template (Jinja2 or simple format) to map payload to inputs.
+        enabled: Whether the webhook is active.
+    """
+
+    __tablename__ = "webhooks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    action_id: Mapped[str] = mapped_column(String)
+    secret: Mapped[str] = mapped_column(String)
+    inputs_template: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(default=True)
+
+    project: Mapped["Project"] = relationship(back_populates="webhooks")
 
 
 class Snapshot(Base):
