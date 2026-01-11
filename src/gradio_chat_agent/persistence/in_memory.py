@@ -31,6 +31,9 @@ class InMemoryStateRepository(StateRepository):
         ] = {}  # key: f"{project_id}:{user_id}"
         self._limits: dict[str, dict[str, Any]] = {}
         self._webhooks: dict[str, dict[str, Any]] = {}
+        self._schedules: dict[str, dict[str, Any]] = {}
+        self._projects: dict[str, dict[str, Any]] = {}
+        self._memberships: dict[str, dict[str, Any]] = {}
 
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
@@ -205,3 +208,162 @@ class InMemoryStateRepository(StateRepository):
             A dictionary containing webhook details.
         """
         return self._webhooks.get(webhook_id)
+
+    def save_webhook(self, webhook: dict[str, Any]):
+        """Saves or updates a webhook configuration.
+
+        Args:
+            webhook: A dictionary containing webhook details.
+        """
+        self._webhooks[webhook["id"]] = webhook
+
+    def delete_webhook(self, webhook_id: str):
+        """Deletes a webhook configuration.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+        """
+        if webhook_id in self._webhooks:
+            del self._webhooks[webhook_id]
+
+    def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a schedule configuration by ID.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+
+        Returns:
+            A dictionary containing schedule details.
+        """
+        return self._schedules.get(schedule_id)
+
+    def save_schedule(self, schedule: dict[str, Any]):
+        """Saves or updates a schedule configuration.
+
+        Args:
+            schedule: A dictionary containing schedule details.
+        """
+        self._schedules[schedule["id"]] = schedule
+
+    def delete_schedule(self, schedule_id: str):
+        """Deletes a schedule configuration.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+        """
+        if schedule_id in self._schedules:
+            del self._schedules[schedule_id]
+
+    def create_project(self, project_id: str, name: str):
+        """Creates a new project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            name: Human-readable name of the project.
+        """
+        self._projects[project_id] = {
+            "id": project_id,
+            "name": name,
+            "created_at": datetime.now(),
+            "archived_at": None,
+        }
+
+    def archive_project(self, project_id: str):
+        """Archives a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        if project_id in self._projects:
+            self._projects[project_id]["archived_at"] = datetime.now()
+
+    def purge_project(self, project_id: str):
+        """Permanently deletes a project and all associated data.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        self._projects.pop(project_id, None)
+        self._snapshots.pop(project_id, None)
+        self._executions.pop(project_id, None)
+        self._limits.pop(project_id, None)
+        # Also clean up memberships and facts...
+        keys_to_del = [
+            k for k in self._memberships if k.startswith(f"{project_id}:")
+        ]
+        for k in keys_to_del:
+            del self._memberships[k]
+
+        fact_keys_to_del = [
+            k for k in self._facts if k.startswith(f"{project_id}:")
+        ]
+        for k in fact_keys_to_del:
+            del self._facts[k]
+
+        webhook_keys_to_del = [
+            k
+            for k, v in self._webhooks.items()
+            if v.get("project_id") == project_id
+        ]
+        for k in webhook_keys_to_del:
+            del self._webhooks[k]
+
+        schedule_keys_to_del = [
+            k
+            for k, v in self._schedules.items()
+            if v.get("project_id") == project_id
+        ]
+        for k in schedule_keys_to_del:
+            del self._schedules[k]
+
+    def add_project_member(self, project_id: str, user_id: str, role: str):
+        """Adds a member to a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The role to assign (viewer, operator, admin).
+        """
+        key = f"{project_id}:{user_id}"
+        self._memberships[key] = {
+            "project_id": project_id,
+            "user_id": user_id,
+            "role": role,
+        }
+
+    def remove_project_member(self, project_id: str, user_id: str):
+        """Removes a member from a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+        """
+        key = f"{project_id}:{user_id}"
+        self._memberships.pop(key, None)
+
+    def update_project_member_role(
+        self, project_id: str, user_id: str, role: str
+    ):
+        """Updates a member's role in a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The new role to assign.
+        """
+        self.add_project_member(project_id, user_id, role)
+
+    def get_project_members(self, project_id: str) -> list[dict[str, str]]:
+        """Retrieves all members of a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+
+        Returns:
+            A list of dictionaries containing user_id and role.
+        """
+        members = []
+        for v in self._memberships.values():
+            if v["project_id"] == project_id:
+                members.append({"user_id": v["user_id"], "role": v["role"]})
+        return members

@@ -63,6 +63,59 @@ class Project(Base):
         back_populates="project", uselist=False
     )
     webhooks: Mapped[list["Webhook"]] = relationship(back_populates="project")
+    memberships: Mapped[list["ProjectMembership"]] = relationship(
+        back_populates="project"
+    )
+    schedules: Mapped[list["Schedule"]] = relationship(
+        back_populates="project"
+    )
+
+
+class Schedule(Base):
+    """Represents a scheduled job for automated execution.
+
+    Attributes:
+        id: Unique identifier for the schedule.
+        project_id: The project this schedule belongs to.
+        action_id: The action to execute.
+        cron: Cron expression defining the schedule.
+        inputs: JSON blob of static inputs for the action.
+        enabled: Whether the schedule is active.
+    """
+
+    __tablename__ = "schedules"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    action_id: Mapped[str] = mapped_column(String)
+    cron: Mapped[str] = mapped_column(String)
+    inputs: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(default=True)
+
+    project: Mapped["Project"] = relationship(back_populates="schedules")
+
+
+class ProjectMembership(Base):
+    """Represents a user's membership in a project.
+
+    Attributes:
+        project_id: The ID of the project.
+        user_id: The ID of the user (or username).
+        role: The role assigned (viewer, operator, admin).
+        project: The project associated with this membership.
+    """
+
+    __tablename__ = "project_memberships"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    role: Mapped[str] = mapped_column(String)  # viewer, operator, admin
+
+    project: Mapped["Project"] = relationship(back_populates="memberships")
 
 
 class ProjectLimits(Base):

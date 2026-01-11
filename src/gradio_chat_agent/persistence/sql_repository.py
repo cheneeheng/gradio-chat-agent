@@ -6,6 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import sessionmaker
 
+from gradio_chat_agent.models.enums import ExecutionStatus
 from gradio_chat_agent.models.execution_result import (
     ExecutionError,
     ExecutionResult,
@@ -17,6 +18,8 @@ from gradio_chat_agent.persistence.models import (
     Execution,
     Project,
     ProjectLimits,
+    ProjectMembership,
+    Schedule,
     SessionFact,
     Snapshot,
     Webhook,
@@ -179,7 +182,7 @@ class SQLStateRepository(StateRepository):
                     ExecutionResult(
                         request_id=row.request_id,
                         action_id=row.action_id,
-                        status=row.status,
+                        status=ExecutionStatus(row.status),
                         timestamp=row.timestamp,
                         message=row.message,
                         state_snapshot_id=row.state_snapshot_id,
@@ -327,7 +330,7 @@ class SQLStateRepository(StateRepository):
                     Execution.status == "success",
                 )
             )
-            return session.execute(stmt).scalar()
+            return session.execute(stmt).scalar() or 0
 
     def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a webhook configuration by ID.
@@ -350,3 +353,200 @@ class SQLStateRepository(StateRepository):
                 "inputs_template": webhook.inputs_template,
                 "enabled": webhook.enabled,
             }
+
+    def save_webhook(self, webhook: dict[str, Any]):
+        """Saves or updates a webhook configuration.
+
+        Args:
+            webhook: A dictionary containing webhook details.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(webhook["project_id"])
+
+            db_webhook = session.get(Webhook, webhook["id"])
+            if db_webhook:
+                db_webhook.action_id = webhook["action_id"]
+                db_webhook.secret = webhook["secret"]
+                db_webhook.inputs_template = webhook.get("inputs_template")
+                db_webhook.enabled = webhook.get("enabled", True)
+            else:
+                db_webhook = Webhook(
+                    id=webhook["id"],
+                    project_id=webhook["project_id"],
+                    action_id=webhook["action_id"],
+                    secret=webhook["secret"],
+                    inputs_template=webhook.get("inputs_template"),
+                    enabled=webhook.get("enabled", True),
+                )
+                session.add(db_webhook)
+            session.commit()
+
+    def delete_webhook(self, webhook_id: str):
+        """Deletes a webhook configuration.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if webhook:
+                session.delete(webhook)
+                session.commit()
+
+    def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a schedule configuration by ID.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+
+        Returns:
+            A dictionary containing schedule details.
+        """
+        with self.SessionLocal() as session:
+            schedule = session.get(Schedule, schedule_id)
+            if not schedule:
+                return None
+            return {
+                "id": schedule.id,
+                "project_id": schedule.project_id,
+                "action_id": schedule.action_id,
+                "cron": schedule.cron,
+                "inputs": schedule.inputs,
+                "enabled": schedule.enabled,
+            }
+
+    def save_schedule(self, schedule: dict[str, Any]):
+        """Saves or updates a schedule configuration.
+
+        Args:
+            schedule: A dictionary containing schedule details.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(schedule["project_id"])
+
+            db_schedule = session.get(Schedule, schedule["id"])
+            if db_schedule:
+                db_schedule.action_id = schedule["action_id"]
+                db_schedule.cron = schedule["cron"]
+                db_schedule.inputs = schedule.get("inputs")
+                db_schedule.enabled = schedule.get("enabled", True)
+            else:
+                db_schedule = Schedule(
+                    id=schedule["id"],
+                    project_id=schedule["project_id"],
+                    action_id=schedule["action_id"],
+                    cron=schedule["cron"],
+                    inputs=schedule.get("inputs"),
+                    enabled=schedule.get("enabled", True),
+                )
+                session.add(db_schedule)
+            session.commit()
+
+    def delete_schedule(self, schedule_id: str):
+        """Deletes a schedule configuration.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+        """
+        with self.SessionLocal() as session:
+            schedule = session.get(Schedule, schedule_id)
+            if schedule:
+                session.delete(schedule)
+                session.commit()
+
+    def create_project(self, project_id: str, name: str):
+        """Creates a new project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            name: Human-readable name of the project.
+        """
+        with self.SessionLocal() as session:
+            project = Project(id=project_id, name=name)
+            session.add(project)
+            session.commit()
+
+    def archive_project(self, project_id: str):
+        """Archives a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project:
+                project.archived_at = datetime.utcnow()
+                session.commit()
+
+    def purge_project(self, project_id: str):
+        """Permanently deletes a project and all associated data.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project:
+                session.delete(project)
+                session.commit()
+
+    def add_project_member(self, project_id: str, user_id: str, role: str):
+        """Adds a member to a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The role to assign (viewer, operator, admin).
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+            member = session.get(ProjectMembership, (project_id, user_id))
+            if not member:
+                member = ProjectMembership(
+                    project_id=project_id, user_id=user_id, role=role
+                )
+                session.add(member)
+            else:
+                member.role = role
+            session.commit()
+
+    def remove_project_member(self, project_id: str, user_id: str):
+        """Removes a member from a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+        """
+        with self.SessionLocal() as session:
+            member = session.get(ProjectMembership, (project_id, user_id))
+            if member:
+                session.delete(member)
+                session.commit()
+
+    def update_project_member_role(
+        self, project_id: str, user_id: str, role: str
+    ):
+        """Updates a member's role in a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The new role to assign.
+        """
+        self.add_project_member(project_id, user_id, role)
+
+    def get_project_members(self, project_id: str) -> list[dict[str, str]]:
+        """Retrieves all members of a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+
+        Returns:
+            A list of dictionaries containing user_id and role.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [{"user_id": row.user_id, "role": row.role} for row in rows]

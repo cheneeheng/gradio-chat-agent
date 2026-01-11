@@ -163,3 +163,125 @@ class StateRepository(ABC):
         """
 
         pass  # pragma: no cover
+
+    @abstractmethod
+    def save_webhook(self, webhook: dict[str, Any]):
+        """Saves or updates a webhook configuration.
+
+        Args:
+            webhook: A dictionary containing webhook details.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def delete_webhook(self, webhook_id: str):
+        """Deletes a webhook configuration.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a schedule configuration by ID.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+
+        Returns:
+            A dictionary containing schedule details.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def save_schedule(self, schedule: dict[str, Any]):
+        """Saves or updates a schedule configuration.
+
+        Args:
+            schedule: A dictionary containing schedule details.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def delete_schedule(self, schedule_id: str):
+        """Deletes a schedule configuration.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def create_project(self, project_id: str, name: str):
+        """Creates a new project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            name: Human-readable name of the project.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def archive_project(self, project_id: str):
+        """Archives a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def purge_project(self, project_id: str):
+        """Permanently deletes a project and all associated data.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def add_project_member(self, project_id: str, user_id: str, role: str):
+        """Adds a member to a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The role to assign (viewer, operator, admin).
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def remove_project_member(self, project_id: str, user_id: str):
+        """Removes a member from a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def update_project_member_role(
+        self, project_id: str, user_id: str, role: str
+    ):
+        """Updates a member's role in a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The new role to assign.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def get_project_members(self, project_id: str) -> list[dict[str, str]]:
+        """Retrieves all members of a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+
+        Returns:
+            A list of dictionaries containing user_id and role.
+        """
+        pass  # pragma: no cover

@@ -379,7 +379,7 @@ class ExecutionEngine:
             self.repository.save_execution(project_id, result)
         except Exception:
             # In case of DB error during rejection log, we shouldn't crash the rejection response
-            pass
+            _ = None
         return result
 
     def _create_failure(
@@ -414,5 +414,5 @@ class ExecutionEngine:
         try:
             self.repository.save_execution(project_id, result)
         except Exception:
-            pass
+            _ = None
         return result

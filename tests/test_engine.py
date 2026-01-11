@@ -1,5 +1,6 @@
 import uuid
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from gradio_chat_agent.execution.engine import ExecutionEngine
@@ -19,6 +20,7 @@ from gradio_chat_agent.models.enums import (
     IntentType,
 )
 from gradio_chat_agent.models.intent import ChatIntent
+from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
@@ -332,6 +334,68 @@ class TestEngine:
         res3 = engine.execute_intent(pid, intent)
         assert res3.status == ExecutionStatus.REJECTED
         assert "Rate limit exceeded" in res3.message
+
+    def test_engine_lock_direct(self, setup):
+        engine, _, _, pid = setup
+        # Call direct to ensure coverage
+        lock = engine._get_project_lock(pid)
+        assert lock is not None
+        # Call again to hit the "if project_id in self.project_locks" branch (implicit in get)
+        lock2 = engine._get_project_lock(pid)
+        assert lock == lock2
+
+    def test_engine_lock_reuse(self, setup):
+        engine, _, _, pid = setup
+        # First call creates the lock
+        lock1 = engine._get_project_lock(pid)
+        # Second call reuses it - explicitly hitting the cached branch
+        lock2 = engine._get_project_lock(pid)
+        assert lock1 is lock2
+        assert pid in engine.project_locks
+
+    def test_execute_plan_step_failure(self, setup):
+        engine, _, _, pid = setup
+        
+        # Plan with 2 steps: 1st fails, 2nd should be skipped
+        plan = ExecutionPlan(
+            plan_id="p1",
+            steps=[
+                ChatIntent(
+                    type=IntentType.ACTION_CALL,
+                    request_id="r1",
+                    action_id="missing.action" # Will reject
+                ),
+                ChatIntent(
+                    type=IntentType.ACTION_CALL,
+                    request_id="r2",
+                    action_id="demo.counter.set",
+                    inputs={"value": 10}
+                )
+            ]
+        )
+        
+        results = engine.execute_plan(pid, plan)
+        
+        # Should have broken after first failure
+        assert len(results) == 1
+        assert results[0].status == ExecutionStatus.REJECTED
+
+    def test_revert_with_no_history(self, setup):
+        engine, _, repo, pid = setup
+        
+        # Create a snapshot in a DIFFERENT project so it exists in repo
+        other_pid = "other-proj"
+        snap = StateSnapshot(snapshot_id="s1", components={"comp": {"foo": "bar"}})
+        repo.save_snapshot(other_pid, snap)
+        
+        # Revert 'pid' (which has no history) to 's1'
+        # This triggers "if not current_snapshot:" branch
+        result = engine.revert_to_snapshot(pid, "s1")
+        
+        assert result.status == ExecutionStatus.SUCCESS
+        # Verify state
+        latest = repo.get_latest_snapshot(pid)
+        assert latest.components == {"comp": {"foo": "bar"}}
 
 
 class TestEngineExceptions:

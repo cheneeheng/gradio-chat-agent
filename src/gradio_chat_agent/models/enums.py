@@ -98,3 +98,35 @@ class ActionVisibility(str, Enum):
 
     USER = "user"
     DEVELOPER = "developer"
+
+
+class ProjectOp(str, Enum):
+    """Operations for project management."""
+
+    CREATE = "create"
+    ARCHIVE = "archive"
+    PURGE = "purge"
+
+
+class MembershipOp(str, Enum):
+    """Operations for membership management."""
+
+    ADD = "add"
+    REMOVE = "remove"
+    UPDATE_ROLE = "update_role"
+
+
+class WebhookOp(str, Enum):
+    """Operations for webhook management."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+
+
+class ScheduleOp(str, Enum):
+    """Operations for schedule management."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
