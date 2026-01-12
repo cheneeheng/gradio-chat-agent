@@ -29,6 +29,7 @@ class AgentAdapter(ABC):
         action_registry: dict[str, Any],
         media: Optional[dict[str, Any]] = None,
         execution_mode: str = "assisted",
+        facts: Optional[dict[str, Any]] = None,
     ) -> Union[ChatIntent, ExecutionPlan]:
         """Converts a user message and context into a structured intent or plan.
 
@@ -46,6 +47,7 @@ class AgentAdapter(ABC):
                 Defaults to None.
             execution_mode: The operational mode for agent execution (e.g.,
                 'interactive', 'assisted', 'autonomous'). Defaults to 'assisted'.
+            facts: Dictionary of session facts (memory) to provide context.
 
         Returns:
             A ChatIntent object representing a single action or clarification

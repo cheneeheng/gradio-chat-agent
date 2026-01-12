@@ -70,6 +70,7 @@ class ApiEndpoints:
             user_roles=[
                 "admin"
             ],  # API access assumed Admin for now per docs/22_API_REFERENCE
+            user_id="api_user",
         )
 
         return result.model_dump(mode="json")
@@ -100,6 +101,7 @@ class ApiEndpoints:
             project_id=project_id,
             plan=plan_obj,
             user_roles=["admin"],
+            user_id="api_user",
         )
         return [res.model_dump(mode="json") for res in results]
 
@@ -181,6 +183,7 @@ class ApiEndpoints:
             project_id=webhook["project_id"],
             intent=intent,
             user_roles=["admin"],
+            user_id="webhook",
         )
 
         return result.model_dump(mode="json")

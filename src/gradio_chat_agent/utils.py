@@ -4,6 +4,8 @@ This module provides shared helper functions used across the application,
 such as diff computation and common transformations.
 """
 
+import base64
+import mimetypes
 from typing import Any
 
 from gradio_chat_agent.models.enums import StateDiffOp
@@ -61,3 +63,22 @@ def compute_state_diff(
                 )
 
     return diffs
+
+
+def encode_media(file_path: str) -> dict[str, str]:
+    """Encodes a file as a base64 string for intent media.
+
+    Args:
+        file_path: Path to the local file.
+
+    Returns:
+        A dictionary with 'data' (base64 string) and 'mime_type'.
+    """
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    with open(file_path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+
+    return {"data": data, "mime_type": mime_type}

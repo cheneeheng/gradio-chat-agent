@@ -2,29 +2,29 @@
 
 ## 1. Agent & Intelligence
 
-- [ ] **Interactive Safety Behavior:** Update the agent to detect precondition failures and automatically suggest the "minimal next action" required to satisfy the state (e.g., suggesting a "login" action if an "upload" action fails due to missing auth state).
-- [ ] **Structured Clarification Protocol:** Enforce a strict format for `ask_clarification` where multiple matching actions are presented as a numbered list with titles and IDs.
-- [ ] **Simulation (Dry-Run) Mode:** Implement a simulation path in the `ExecutionEngine` to allow agents to preview the state impact of a plan without committing changes or triggering side effects.
-- [ ] **Plan Step Limits:** Enforce `max_steps` per plan based on the execution mode (Interactive vs. Autonomous) to prevent runaway loops.
-- [ ] **Multi-step Planning:** Update `OpenAIAgentAdapter` to detect and process multiple tool calls, wrapping them into an `ExecutionPlan` instead of just the first `ChatIntent`.
-- [ ] **Optimized Parameter Completion:** Refine the clarification logic to ensure the agent asks _only_ for the specific missing required fields identified by the JSON Schema, minimizing user friction.
-- [ ] **Context Enrichment:** Inject recent execution results (history) and state diffs into the LLM system prompt to help the agent verify its own progress.
-- [ ] **Memory Store Alignment:** Refactor the `memory.remember` and `memory.forget` action handlers in `system_actions.py` to utilize the authoritative `session_facts` table in the repository instead of mutating the `sys.memory` UI component state.
-- [ ] **User-Scoped Context:** Update the `AgentAdapter` interface and `on_submit` logic to pass the `user_id`, ensuring that the "Memory Block" injection is strictly scoped to the specific (user, project) pair as required for privacy.
-- [ ] **Explicit Fact Injection:** Explicitly retrieve and inject session facts from the `SessionFact` repository into the context window.
-- [ ] **Multimodal Support:**
+- [x] **Interactive Safety Behavior:** Update the agent to detect precondition failures and automatically suggest the "minimal next action" required to satisfy the state (e.g., suggesting a "login" action if an "upload" action fails due to missing auth state).
+- [x] **Structured Clarification Protocol:** Enforce a strict format for `ask_clarification` where multiple matching actions are presented as a numbered list with titles and IDs.
+- [x] **Simulation (Dry-Run) Mode:** Implement a simulation path in the `ExecutionEngine` to allow agents to preview the state impact of a plan without committing changes or triggering side effects.
+- [x] **Plan Step Limits:** Enforce `max_steps` per plan based on the execution mode (Interactive vs. Autonomous) to prevent runaway loops.
+- [x] **Multi-step Planning:** Update `OpenAIAgentAdapter` to detect and process multiple tool calls, wrapping them into an `ExecutionPlan` instead of just the first `ChatIntent`.
+- [x] **Optimized Parameter Completion:** Refine the clarification logic to ensure the agent asks _only_ for the specific missing required fields identified by the JSON Schema, minimizing user friction.
+- [x] **Context Enrichment:** Inject recent execution results (history) and state diffs into the LLM system prompt to help the agent verify its own progress.
+- [x] **Memory Store Alignment:** Refactor the `memory.remember` and `memory.forget` action handlers in `system_actions.py` to utilize the authoritative `session_facts` table in the repository instead of mutating the `sys.memory` UI component state.
+- [x] **User-Scoped Context:** Update the `AgentAdapter` interface and `on_submit` logic to pass the `user_id`, ensuring that the "Memory Block" injection is strictly scoped to the specific (user, project) pair as required for privacy.
+- [x] **Explicit Fact Injection:** Explicitly retrieve and inject session facts from the `SessionFact` repository into the context window.
+- [x] **Multimodal Support:**
   - **UI Collection:** Update the Gradio `on_submit` handler to extract uploaded image data from the chat history and package it into the `media` field of the `ChatIntent`.
   - **Vision Interpretation:** Complete the `# TODO` in `OpenAIAgentAdapter` to convert `IntentMedia` into OpenAI-compatible `image_url` message parts.
   - **Media Hashing:** Update the `ExecutionEngine` to store a hash or reference of the intent media in the audit log metadata, satisfying the requirement to avoid full image persistence in the database.
-- [ ] **Automated Confirmation Detection:** Implement logic in the `AgentAdapter` or `OpenAIAgentAdapter` to recognize user approval keywords (e.g., "confirm", "proceed", "yes") and automatically re-submit the previous rejected intent with the `confirmed=true` flag, fulfilling the interaction pattern in the protocol.
-- [ ] **Hallucination Control Loop:** Implement an internal retry loop in the adapter to catch invalid `action_id` calls or schema violations.
-- [ ] **LLM Proxy & Azure Support:** Implement the `OPENAI_API_BASE` configuration in `OpenAIAgentAdapter` to allow integration with Azure OpenAI or local LLM gateways (e.g., LiteLLM, vLLM).
+- [x] **Automated Confirmation Detection:** Implement logic in the `AgentAdapter` or `OpenAIAgentAdapter` to recognize user approval keywords (e.g., "confirm", "proceed", "yes") and automatically re-submit the previous rejected intent with the `confirmed=true` flag, fulfilling the interaction pattern in the protocol.
+- [x] **Hallucination Control Loop:** Implement an internal retry loop in the adapter to catch invalid `action_id` calls or schema violations.
+- [x] **LLM Proxy & Azure Support:** Implement the `OPENAI_API_BASE` configuration in `OpenAIAgentAdapter` to allow integration with Azure OpenAI or local LLM gateways (e.g., LiteLLM, vLLM).
 
 ## 2. Session Memory & Facts
 
-- [ ] **Missing Fact Injection (Read Path):** Update the `on_submit` handler in `layout.py` and the `AgentAdapter` interface to fetch and inject session facts for the current `(user_id, project_id)` at the start of every chat turn.
-- [ ] **Memory Store Alignment:** Refactor the `memory.remember` and `memory.forget` action handlers in `system_actions.py` to utilize the authoritative `session_facts` table in the repository instead of mutating the `sys.memory` UI component state.
-- [ ] **User-Scoped Context:** Ensure that the "Memory Block" injection is strictly scoped to the specific (user, project) pair as required for privacy.
+- [x] **Missing Fact Injection (Read Path):** Update the `on_submit` handler in `layout.py` and the `AgentAdapter` interface to fetch and inject session facts for the current `(user_id, project_id)` at the start of every chat turn.
+- [x] **Memory Store Alignment:** Refactor the `memory.remember` and `memory.forget` action handlers in `system_actions.py` to utilize the authoritative `session_facts` table in the repository instead of mutating the `sys.memory` UI component state.
+- [x] **User-Scoped Context:** Ensure that the "Memory Block" injection is strictly scoped to the specific (user, project) pair as required for privacy.
 - [ ] **Memory Management UI:** Implement a "Memory List" tab in the State Inspector (matching the `MemoryList` pattern in the reference snippets) to allow users to view, edit, and delete stored facts manually.
 
 ## 3. User Interface & Experience

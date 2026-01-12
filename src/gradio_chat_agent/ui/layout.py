@@ -13,6 +13,7 @@ from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
+from gradio_chat_agent.utils import encode_media
 
 
 DEFAULT_PROJECT_ID = "default_project"
@@ -61,8 +62,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             # --- Main Chat Area ---
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(label="Agent", height=600)
-                msg_input = gr.Textbox(
-                    placeholder="Type a command...", label="Command", lines=2
+                msg_input = gr.MultimodalTextbox(
+                    placeholder="Type a command or upload image...", label="Command", lines=2
                 )
                 submit_btn = gr.Button("Submit", variant="primary")
 
@@ -125,8 +126,16 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         )
 
         # Chat Interaction
-        def on_submit(message, history, pid, mode):
+        def on_submit(message_data, history, pid, uid, mode):
             """Main handler for chat message submission."""
+            # Parse MultimodalTextbox input
+            if isinstance(message_data, dict):
+                message = message_data.get("text", "")
+                files = message_data.get("files", [])
+            else:
+                message = str(message_data)
+                files = []
+
             # 1. Add user message to history
             new_history = history + [{"role": "user", "content": message}]
 
@@ -140,6 +149,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 snapshot = StateSnapshot(snapshot_id="init", components={})
 
             state_dict = snapshot.components
+            facts = engine.repository.get_session_facts(pid, uid)
+            
             comp_reg = {
                 c.component_id: c.model_dump()
                 for c in engine.registry.list_components()
@@ -149,6 +160,14 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 for a in engine.registry.list_actions()
             }
 
+            # Media processing
+            media = None
+            if files:
+                # Use the first file
+                file_path = files[0]
+                media = encode_media(file_path)
+                media["type"] = "image" # Force image for now
+
             try:
                 result = adapter.message_to_intent_or_plan(
                     message=message,
@@ -157,6 +176,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                     component_registry=comp_reg,
                     action_registry=act_reg,
                     execution_mode=mode,
+                    facts=facts,
+                    media=media,
                 )
             except Exception as e:
                 err_msg = f"Agent Error: {str(e)}"
@@ -217,7 +238,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 elif intent.type == IntentType.ACTION_CALL:
                     # Execute single action
                     exec_result = engine.execute_intent(
-                        pid, intent, user_roles=["admin"]
+                        pid, intent, user_roles=["admin"], user_id=uid
                     )
 
                     if exec_result.status == "success":
@@ -288,7 +309,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
         submit_btn.click(
             on_submit,
-            inputs=[msg_input, chatbot, project_id_state, execution_mode],
+            inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
             outputs=[
                 msg_input,
                 chatbot,
@@ -302,7 +323,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
         msg_input.submit(
             on_submit,
-            inputs=[msg_input, chatbot, project_id_state, execution_mode],
+            inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
             outputs=[
                 msg_input,
                 chatbot,
@@ -315,7 +336,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         )
 
         # Plan Approval Handlers
-        def on_approve_plan(plan, history, pid):
+        def on_approve_plan(plan, history, pid, uid):
             if not plan:
                 return (
                     history,
@@ -326,7 +347,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                     None,
                 )
 
-            results = engine.execute_plan(pid, plan, user_roles=["admin"])
+            results = engine.execute_plan(pid, plan, user_roles=["admin"], user_id=uid)
 
             summary = "### Plan Execution Result\n"
             final_diff = []
@@ -354,7 +375,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
         approve_plan_btn.click(
             on_approve_plan,
-            inputs=[pending_plan_state, chatbot, project_id_state],
+            inputs=[pending_plan_state, chatbot, project_id_state, user_id_state],
             outputs=[
                 chatbot,
                 state_json,

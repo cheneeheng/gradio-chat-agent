@@ -7,7 +7,7 @@ attempt to execute an intent.
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from gradio_chat_agent.models.enums import ExecutionStatus, StateDiffOp
 
@@ -62,6 +62,8 @@ class ExecutionResult(BaseModel):
         state_snapshot_id: ID of the resulting state snapshot.
         state_diff: List of changes applied to the state.
         error: Error details if the status is REJECTED or FAILED.
+        simulated: Whether this execution was a simulation (dry-run).
+        metadata: Arbitrary metadata about the execution (e.g. costs, media hashes).
     """
 
     model_config = ConfigDict(use_enum_values=True)
@@ -96,3 +98,12 @@ class ExecutionResult(BaseModel):
         default=None,
         description="Error details if the status is REJECTED or FAILED.",
     )
+    simulated: bool = Field(
+        default=False,
+        description="Whether this execution was a simulation (dry-run).",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arbitrary metadata about the execution (e.g. costs, media hashes).",
+    )
+    _simulated_state: Optional[dict[str, Any]] = PrivateAttr(default=None)

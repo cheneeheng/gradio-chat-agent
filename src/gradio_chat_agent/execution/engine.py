@@ -6,6 +6,7 @@ inputs, checks permissions, and records audit logs.
 """
 
 import copy
+import hashlib
 import threading
 import uuid
 from typing import Optional
@@ -71,6 +72,8 @@ class ExecutionEngine:
         project_id: str,
         plan: ExecutionPlan,
         user_roles: Optional[list[str]] = None,
+        simulate: bool = False,
+        user_id: Optional[str] = None,
     ) -> list[ExecutionResult]:
         """Executes a multi-step plan sequentially.
 
@@ -78,21 +81,57 @@ class ExecutionEngine:
             project_id: The ID of the project context.
             plan: The execution plan containing multiple steps.
             user_roles: List of roles held by the requesting user.
+            simulate: If True, performs a dry-run without persisting changes.
+            user_id: The ID of the user executing the plan.
 
         Returns:
             A list of ExecutionResult objects for all attempted steps.
         """
         results = []
+
+        # Determine execution mode from first step or default
+        mode = "assisted"
+        if plan.steps:
+            mode = plan.steps[0].execution_mode or "assisted"
+
+        # Set limits
+        max_steps = 5  # Default/Assisted
+        if mode == "interactive":
+            max_steps = 1
+        elif mode == "autonomous":
+            max_steps = 10
+
+        if len(plan.steps) > max_steps:
+            error_result = self._create_rejection(
+                project_id,
+                plan.steps[0],
+                f"Plan exceeds step limit for {mode} mode ({len(plan.steps)} > {max_steps}).",
+                code="plan_limit_exceeded",
+            )
+            return [error_result]
+
+        current_simulated_state = None
+
         for step in plan.steps:
             # Execute the step
             result = self.execute_intent(
-                project_id=project_id, intent=step, user_roles=user_roles
+                project_id=project_id,
+                intent=step,
+                user_roles=user_roles,
+                simulate=simulate,
+                override_state=current_simulated_state,
+                user_id=user_id,
             )
             results.append(result)
 
             # Abort on failure or rejection
             if result.status != ExecutionStatus.SUCCESS:
                 break
+
+            # If simulating, update the simulated state for the next step
+            if simulate and result.status == ExecutionStatus.SUCCESS:
+                if hasattr(result, "_simulated_state"):
+                    current_simulated_state = result._simulated_state
 
         return results
 
@@ -101,6 +140,9 @@ class ExecutionEngine:
         project_id: str,
         intent: ChatIntent,
         user_roles: Optional[list[str]] = None,
+        simulate: bool = False,
+        override_state: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> ExecutionResult:
         """Executes a single intent against a project's state.
 
@@ -112,6 +154,9 @@ class ExecutionEngine:
             intent: The structured intent object to execute.
             user_roles: List of roles held by the requesting user.
                 Defaults to ['viewer'].
+            simulate: If True, performs a dry-run without persisting changes.
+            override_state: Optional state dict to use instead of DB state (for chained simulation).
+            user_id: The ID of the user executing the intent (required for memory actions).
 
         Returns:
             An ExecutionResult object indicating success, rejection, or failure.
@@ -130,16 +175,75 @@ class ExecutionEngine:
                 project_id, intent, "Missing action_id."
             )
 
+        # Handle Memory Actions (System Actions that write to Facts table)
+        if intent.action_id in ["memory.remember", "memory.forget"]:
+            if not user_id:
+                return self._create_rejection(
+                    project_id, intent, "User ID required for memory actions."
+                )
+
+            if simulate:
+                return ExecutionResult(
+                    request_id=intent.request_id,
+                    action_id=intent.action_id,
+                    status=ExecutionStatus.SUCCESS,
+                    message="Simulated memory update.",
+                    state_snapshot_id="simulated",
+                    simulated=True,
+                )
+
+            inputs = intent.inputs or {}
+            try:
+                if intent.action_id == "memory.remember":
+                    self.repository.save_session_fact(
+                        project_id,
+                        user_id,
+                        inputs.get("key"),  # pyright: ignore[reportArgumentType]; The error will be caugt by the exception.
+                        inputs.get("value"),
+                    )
+                    msg = f"Remembered: {inputs.get('key')} = {inputs.get('value')}"
+                else:  # memory.forget
+                    self.repository.delete_session_fact(
+                        project_id,
+                        user_id,
+                        inputs.get("key"),  # pyright: ignore[reportArgumentType]; The error will be caugt by the exception.
+                    )
+                    msg = f"Forgot: {inputs.get('key')}"
+
+                # Log execution, but no state diff for components
+                result = ExecutionResult(
+                    request_id=intent.request_id,
+                    action_id=intent.action_id,
+                    status=ExecutionStatus.SUCCESS,
+                    message=msg,
+                    state_snapshot_id="no_snapshot",  # System action
+                    state_diff=[],
+                )
+                self.repository.save_execution(project_id, result)
+                return result
+
+            except Exception as e:
+                return self._create_failure(
+                    project_id, intent, f"Memory error: {str(e)}"
+                )
+
         # 2. Acquire Lock
         lock = self._get_project_lock(project_id)
         with lock:
             # 3. Load State
-            current_snapshot = self.repository.get_latest_snapshot(project_id)
-            if not current_snapshot:
-                # Initialize empty state if none exists
+            if override_state is not None:
                 current_snapshot = StateSnapshot(
-                    snapshot_id=str(uuid.uuid4()), components={}
+                    snapshot_id="simulated_prev", components=override_state
                 )
+            else:
+                current_snapshot = self.repository.get_latest_snapshot(
+                    project_id
+                )
+                if not current_snapshot:
+                    # Initialize empty state if none exists
+                    current_snapshot = StateSnapshot(
+                        snapshot_id=str(uuid.uuid4()), components={}
+                    )
 
             # 4. Resolve Action
             action = self.registry.get_action(intent.action_id)
@@ -156,7 +260,7 @@ class ExecutionEngine:
             rpm_limit = (
                 limits.get("limits", {}).get("rate", {}).get("per_minute")
             )
-            if rpm_limit:
+            if rpm_limit and not simulate:
                 recent_count = self.repository.count_recent_executions(
                     project_id, minutes=1
                 )
@@ -255,10 +359,19 @@ class ExecutionEngine:
                 )
 
             # 9. Commit
-            new_snapshot_id = str(uuid.uuid4())
-            new_snapshot = StateSnapshot(
-                snapshot_id=new_snapshot_id, components=new_components
+            new_snapshot_id = (
+                str(uuid.uuid4()) if not simulate else "simulated"
             )
+
+            # Media Hashing
+            metadata = {}
+            if intent.media and intent.media.data:
+                media_hash = hashlib.sha256(
+                    intent.media.data.encode("utf-8")
+                ).hexdigest()
+                metadata["media_hash"] = media_hash
+                metadata["media_type"] = intent.media.type
+                metadata["media_mime"] = intent.media.mime_type
 
             # Re-compute diffs if handler didn't provide them reliably,
             # or just trust the handler. The Utils function is safer.
@@ -273,6 +386,16 @@ class ExecutionEngine:
                 message=message or "Action executed successfully.",
                 state_snapshot_id=new_snapshot_id,
                 state_diff=computed_diffs,
+                simulated=simulate,
+                metadata=metadata,
+            )
+
+            if simulate:
+                result._simulated_state = new_components
+                return result
+
+            new_snapshot = StateSnapshot(
+                snapshot_id=new_snapshot_id, components=new_components
             )
 
             self.repository.save_snapshot(project_id, new_snapshot)
