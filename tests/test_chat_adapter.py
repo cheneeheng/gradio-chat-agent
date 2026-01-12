@@ -5,6 +5,7 @@ import pytest
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.enums import IntentType
+from gradio_chat_agent.models.plan import ExecutionPlan
 
 class TestChatAdapter:
     @pytest.fixture
@@ -141,7 +142,7 @@ class TestChatAdapter:
             state_snapshot={},
             component_registry={},
             action_registry={},
-            media={"type": "image", "data": "..."}
+            media={"type": "image", "data": "...", "mime_type": "image/png"}
         )
         # Verify call args included media handling logic (which currently passes)
         # Since logic is just 'pass', we mainly ensure it doesn't crash and lines are hit.
@@ -166,10 +167,75 @@ class TestChatAdapter:
             history=[],
             state_snapshot={},
             component_registry={},
-            action_registry={}
+            action_registry={"demo.action": {}}
         )
         
         # Should fallback to empty dict args and still return action call
         assert intent.type == IntentType.ACTION_CALL
         assert intent.action_id == "demo.action"
         assert intent.inputs == {}
+
+    def test_openai_adapter_multiple_tool_calls(self, mock_openai_client):
+        adapter = OpenAIAgentAdapter()
+        mock_completion = MagicMock()
+        mock_message = MagicMock()
+        
+        tc1 = MagicMock()
+        tc1.id = "1"
+        tc1.function.name = "act1"
+        tc1.function.arguments = "{}"
+        
+        tc2 = MagicMock()
+        tc2.id = "2"
+        tc2.function.name = "act2"
+        tc2.function.arguments = "{}"
+        
+        mock_message.tool_calls = [tc1, tc2]
+        mock_completion.choices = [MagicMock(message=mock_message)]
+        adapter.client.chat.completions.create.return_value = mock_completion
+
+        res = adapter.message_to_intent_or_plan("msg", [], {}, {}, {"act1": {}, "act2": {}})
+        assert isinstance(res, ExecutionPlan)
+        assert len(res.steps) == 2
+
+    def test_openai_adapter_hallucination_retry(self, mock_openai_client):
+        adapter = OpenAIAgentAdapter()
+        
+        # 1st response: hallucination
+        mock_msg_1 = MagicMock()
+        tc_bad = MagicMock()
+        tc_bad.id = "bad_call"
+        tc_bad.function.name = "hallucinatedaction"
+        tc_bad.function.arguments = "{}"
+        mock_msg_1.tool_calls = [tc_bad]
+        mock_msg_1.role = "assistant"
+        mock_msg_1.model_dump.return_value = {"role": "assistant", "tool_calls": [{"id": "bad_call", "function": {"name": "hallucinatedaction", "arguments": "{}"}}]}
+        
+        # 2nd response: valid
+        mock_msg_2 = MagicMock()
+        tc_good = MagicMock()
+        tc_good.id = "good_call"
+        tc_good.function.name = "validaction"
+        tc_good.function.arguments = "{}"
+        mock_msg_2.tool_calls = [tc_good]
+        mock_msg_2.role = "assistant"
+        
+        mock_completion_1 = MagicMock()
+        mock_completion_1.choices = [MagicMock(message=mock_msg_1)]
+        
+        mock_completion_2 = MagicMock()
+        mock_completion_2.choices = [MagicMock(message=mock_msg_2)]
+        
+        adapter.client.chat.completions.create.side_effect = [mock_completion_1, mock_completion_2]
+        
+        res = adapter.message_to_intent_or_plan(
+            message="do it",
+            history=[],
+            state_snapshot={},
+            component_registry={},
+            action_registry={"validaction": {}}
+        )
+        
+        assert isinstance(res, ChatIntent)
+        assert res.action_id == "validaction"
+        assert adapter.client.chat.completions.create.call_count == 2

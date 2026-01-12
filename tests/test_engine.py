@@ -16,10 +16,11 @@ from gradio_chat_agent.models.component import (
 from gradio_chat_agent.models.enums import (
     ActionRisk,
     ActionVisibility,
+    ExecutionMode,
     ExecutionStatus,
     IntentType,
 )
-from gradio_chat_agent.models.intent import ChatIntent
+from gradio_chat_agent.models.intent import ChatIntent, IntentMedia
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
@@ -396,6 +397,108 @@ class TestEngine:
         # Verify state
         latest = repo.get_latest_snapshot(pid)
         assert latest.components == {"comp": {"foo": "bar"}}
+
+    def test_execute_plan_limits(self, setup):
+        engine, _, _, pid = setup
+        
+        # Interactive mode: max 1 step
+        plan_interactive = ExecutionPlan(plan_id="p1", steps=[
+            ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="a", execution_mode=ExecutionMode.INTERACTIVE),
+            ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="a", execution_mode=ExecutionMode.INTERACTIVE)
+        ])
+        res = engine.execute_plan(pid, plan_interactive)
+        assert len(res) == 1
+        assert res[0].error.code == "plan_limit_exceeded"
+
+        # Autonomous mode: max 10 steps
+        steps = [ChatIntent(type=IntentType.ACTION_CALL, request_id=str(i), action_id="a", execution_mode=ExecutionMode.AUTONOMOUS) for i in range(11)]
+        plan_auto = ExecutionPlan(plan_id="p2", steps=steps)
+        res = engine.execute_plan(pid, plan_auto)
+        assert len(res) == 1
+        assert res[0].error.code == "plan_limit_exceeded"
+
+    def test_chained_simulation(self, setup):
+        engine, registry, repo, pid = setup
+        
+        # Register an increment action
+        action = ActionDeclaration(
+            action_id="inc", title="Inc", description="Inc", targets=["c"],
+            input_schema={"type": "object", "properties": {"v": {"type": "integer"}}},
+            permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER)
+        )
+        def handler(inputs, snapshot):
+            val = snapshot.components.get("c", {}).get("v", 0)
+            new_val = val + inputs.get("v", 1)
+            return {"c": {"v": new_val}}, [], "ok"
+        registry.register_action(action, handler)
+
+        plan = ExecutionPlan(plan_id="p1", steps=[
+            ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="inc", inputs={"v": 10}, execution_mode=ExecutionMode.ASSISTED),
+            ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="inc", inputs={"v": 5}, execution_mode=ExecutionMode.ASSISTED)
+        ])
+
+        # Execute with simulate=True
+        results = engine.execute_plan(pid, plan, simulate=True)
+        assert len(results) == 2
+        assert results[0].simulated is True
+        assert results[1].simulated is True
+        
+        # Check chaining: step 2 should have seen 10 and added 5 = 15
+        assert results[1]._simulated_state["c"]["v"] == 15
+        
+        # Verify repository is still empty
+        assert repo.get_latest_snapshot(pid) is None
+
+    def test_memory_actions(self, setup):
+        engine, _, repo, pid = setup
+        uid = "user1"
+
+        # 1. Missing user_id
+        intent_rem = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="memory.remember", inputs={"key": "k", "value": "v"})
+        res = engine.execute_intent(pid, intent_rem)
+        assert res.status == ExecutionStatus.REJECTED
+        assert "User ID required" in res.message
+
+        # 2. Simulation
+        res = engine.execute_intent(pid, intent_rem, user_id=uid, simulate=True)
+        assert res.status == ExecutionStatus.SUCCESS
+        assert res.simulated is True
+        assert repo.get_session_facts(pid, uid) == {}
+
+        # 3. Real Remember
+        res = engine.execute_intent(pid, intent_rem, user_id=uid)
+        assert res.status == ExecutionStatus.SUCCESS
+        assert repo.get_session_facts(pid, uid) == {"k": "v"}
+
+        # 4. Real Forget
+        intent_forg = ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="memory.forget", inputs={"key": "k"})
+        res = engine.execute_intent(pid, intent_forg, user_id=uid)
+        assert res.status == ExecutionStatus.SUCCESS
+        assert repo.get_session_facts(pid, uid) == {}
+
+        # 5. Memory error
+        repo.save_session_fact = MagicMock(side_effect=Exception("DB Error"))
+        res = engine.execute_intent(pid, intent_rem, user_id=uid)
+        assert res.status == ExecutionStatus.FAILED
+        assert "Memory error" in res.message
+
+    def test_execute_intent_with_media_hashing(self, setup):
+        engine, registry, repo, pid = setup
+        
+        action = ActionDeclaration(
+            action_id="act", title="T", description="D", targets=["c"],
+            input_schema={},
+            permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER)
+        )
+        registry.register_action(action, lambda i, s: ({}, [], "ok"))
+        
+        media = IntentMedia(type="image", data="some-base64-data", mime_type="image/png")
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="act", media=media)
+        
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.SUCCESS
+        assert "media_hash" in res.metadata
+        assert res.metadata["media_type"] == "image"
 
 
 class TestEngineExceptions:
