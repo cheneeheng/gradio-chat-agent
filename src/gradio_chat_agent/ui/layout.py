@@ -13,11 +13,37 @@ from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
+from gradio_chat_agent.ui.theme import AgentTheme
 from gradio_chat_agent.utils import encode_media
 
 
 DEFAULT_PROJECT_ID = "default_project"
 DEFAULT_USER_ID = "admin_user"
+
+CUSTOM_CSS = """
+/* Enhance Chatbot Bubbles */
+.message.user {
+    border-top-right-radius: 0 !important;
+}
+.message.bot {
+    border-top-left-radius: 0 !important;
+}
+
+/* Plan Preview Card */
+.plan-preview {
+    border: 1px solid var(--primary-200) !important;
+    background: var(--primary-50) !important;
+    padding: 1rem !important;
+    border-radius: var(--radius-lg) !important;
+    margin-top: 1rem !important;
+}
+
+/* State JSON viewers */
+.json-viewer {
+    font-family: var(--font-mono) !important;
+    font-size: 0.85rem !important;
+}
+"""
 
 
 def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
@@ -31,8 +57,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         A Gradio gr.Blocks object containing the application layout.
     """
     api = ApiEndpoints(engine)
+    theme = AgentTheme()
 
-    with gr.Blocks(title="Gradio Chat Agent") as demo:
+    with gr.Blocks(title="Gradio Chat Agent", theme=theme, css=CUSTOM_CSS) as demo:
         # State variables
         project_id_state = gr.State(DEFAULT_PROJECT_ID)
         user_id_state = gr.State(DEFAULT_USER_ID)
@@ -68,7 +95,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 submit_btn = gr.Button("Submit", variant="primary")
 
                 # Plan Preview (Hidden by default)
-                with gr.Group(visible=False) as plan_group:
+                with gr.Group(visible=False, elem_classes="plan-preview") as plan_group:
                     gr.Markdown("### Proposed Plan")
                     plan_display = gr.Markdown("No plan pending.")
                     with gr.Row():
@@ -85,11 +112,50 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
                 with gr.Tabs():
                     with gr.Tab("Live State"):
-                        state_json = gr.JSON(label="Current State")
+                        state_json = gr.JSON(label="Current State", elem_classes="json-viewer")
                     with gr.Tab("Diffs"):
-                        diff_json = gr.JSON(label="Last Action Diff")
+                        diff_json = gr.JSON(label="Last Action Diff", elem_classes="json-viewer")
                     with gr.Tab("Registry"):
-                        registry_json = gr.JSON(label="Available Actions")
+                        registry_json = gr.JSON(label="Available Actions", elem_classes="json-viewer")
+                    with gr.Tab("Memory"):
+                        memory_df = gr.Dataframe(
+                            headers=["Key", "Value"],
+                            label="Session Facts",
+                            interactive=False,
+                            wrap=True,
+                        )
+                        with gr.Accordion("Manage Facts", open=False):
+                            with gr.Row():
+                                mem_key_input = gr.Textbox(label="Key")
+                                mem_val_input = gr.Textbox(label="Value")
+                            add_fact_btn = gr.Button("Add/Update Fact", size="sm")
+
+                            with gr.Row():
+                                del_key_input = gr.Textbox(label="Key to Delete")
+                                del_fact_btn = gr.Button("Delete Fact", size="sm", variant="stop")
+
+                            refresh_mem_btn = gr.Button("Refresh Memory", size="sm", variant="secondary")
+
+                    with gr.Tab("Team"):
+                        team_df = gr.Dataframe(
+                            headers=["User ID", "Role"],
+                            label="Project Members",
+                            interactive=False,
+                            wrap=True,
+                        )
+                        with gr.Accordion("Manage Members", open=False):
+                            with gr.Row():
+                                team_user_input = gr.Textbox(label="User ID")
+                                team_role_input = gr.Dropdown(
+                                    choices=["viewer", "operator", "admin"],
+                                    label="Role",
+                                    value="viewer",
+                                )
+                            with gr.Row():
+                                add_member_btn = gr.Button("Add/Update Member", size="sm")
+                                remove_member_btn = gr.Button("Remove Member", size="sm", variant="stop")
+
+                            refresh_team_btn = gr.Button("Refresh Team", size="sm", variant="secondary")
 
         # --- Event Handlers ---
 
@@ -100,7 +166,16 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 return snapshot.components
             return {}
 
-        def refresh_ui(pid):
+        def fetch_facts_df(pid, uid):
+            """Internal helper to fetch facts as dataframe."""
+            facts = engine.repository.get_session_facts(pid, uid)
+            return [[k, str(v)] for k, v in facts.items()]
+
+        def fetch_members_df(pid):
+            """Internal helper to fetch members as dataframe."""
+            members = engine.repository.get_project_members(pid)
+            return [[m["user_id"], m["role"]] for m in members]
+        def refresh_ui(pid, uid):
             """Internal handler to refresh all UI components."""
             state = fetch_state(pid)
             # Registry info
@@ -112,17 +187,81 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                     a.action_id for a in engine.registry.list_actions()
                 ],
             }
+            facts_data = fetch_facts_df(pid, uid)
+            members_data = fetch_members_df(pid)
             return (
                 state,
                 {},
                 reg_info,
+                facts_data,
+                members_data,
             )
 
         # Initial Load
         demo.load(
             refresh_ui,
+            inputs=[project_id_state, user_id_state],
+            outputs=[state_json, diff_json, registry_json, memory_df, team_df],
+        )
+
+        # Memory Handlers
+        def on_add_fact(pid, uid, key, val):
+            if key:
+                engine.repository.save_session_fact(pid, uid, key, val)
+            return fetch_facts_df(pid, uid), "", ""
+
+        add_fact_btn.click(
+            on_add_fact,
+            inputs=[project_id_state, user_id_state, mem_key_input, mem_val_input],
+            outputs=[memory_df, mem_key_input, mem_val_input],
+        )
+
+        def on_delete_fact(pid, uid, key):
+            if key:
+                engine.repository.delete_session_fact(pid, uid, key)
+            return fetch_facts_df(pid, uid), ""
+
+        del_fact_btn.click(
+            on_delete_fact,
+            inputs=[project_id_state, user_id_state, del_key_input],
+            outputs=[memory_df, del_key_input],
+        )
+
+        refresh_mem_btn.click(
+            fetch_facts_df,
+            inputs=[project_id_state, user_id_state],
+            outputs=[memory_df],
+        )
+
+        # Team Handlers
+        def on_add_member(pid, uid, target_uid, role):
+            # TODO: Check if uid is admin (omitted for now as default user is admin)
+            if target_uid and role:
+                engine.repository.add_project_member(pid, target_uid, role)
+            return fetch_members_df(pid), "", "viewer"
+
+        add_member_btn.click(
+            on_add_member,
+            inputs=[project_id_state, user_id_state, team_user_input, team_role_input],
+            outputs=[team_df, team_user_input, team_role_input],
+        )
+
+        def on_remove_member(pid, uid, target_uid):
+                # TODO: Check if uid is admin
+            if target_uid:
+                engine.repository.remove_project_member(pid, target_uid)
+            return fetch_members_df(pid), ""
+
+        remove_member_btn.click(
+            on_remove_member,
+            inputs=[project_id_state, user_id_state, team_user_input],
+            outputs=[team_df, team_user_input],
+        )
+
+        refresh_team_btn.click(
+            fetch_members_df,
             inputs=[project_id_state],
-            outputs=[state_json, diff_json, registry_json],
+            outputs=[team_df],
         )
 
         # Chat Interaction
@@ -150,7 +289,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
             state_dict = snapshot.components
             facts = engine.repository.get_session_facts(pid, uid)
-            
+
             comp_reg = {
                 c.component_id: c.model_dump()
                 for c in engine.registry.list_components()

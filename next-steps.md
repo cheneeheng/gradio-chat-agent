@@ -25,14 +25,14 @@
 - [x] **Missing Fact Injection (Read Path):** Update the `on_submit` handler in `layout.py` and the `AgentAdapter` interface to fetch and inject session facts for the current `(user_id, project_id)` at the start of every chat turn.
 - [x] **Memory Store Alignment:** Refactor the `memory.remember` and `memory.forget` action handlers in `system_actions.py` to utilize the authoritative `session_facts` table in the repository instead of mutating the `sys.memory` UI component state.
 - [x] **User-Scoped Context:** Ensure that the "Memory Block" injection is strictly scoped to the specific (user, project) pair as required for privacy.
-- [ ] **Memory Management UI:** Implement a "Memory List" tab in the State Inspector (matching the `MemoryList` pattern in the reference snippets) to allow users to view, edit, and delete stored facts manually.
+- [x] **Memory Management UI:** Implement a "Memory List" tab in the State Inspector (matching the `MemoryList` pattern in the reference snippets) to allow users to view, edit, and delete stored facts manually.
 
 ## 3. User Interface & Experience
 
-- [ ] **Team/Membership Management UI:** Implement a "Team" or "Settings" tab visible only to Admins, allowing for inviting users, updating roles (`viewer`, `operator`, `admin`), and removing members.
+- [x] **Team/Membership Management UI:** Implement a "Team" or "Settings" tab visible only to Admins, allowing for inviting users, updating roles (`viewer`, `operator`, `admin`), and removing members.
 - [ ] **Rich UI Binding:** Implement a declarative mechanism to bind Gradio components (Sliders, Checkboxes, etc.) directly to paths in the `StateSnapshot`. Ensure UI updates are a pure function of the central state as required by the registry contract.
-- [ ] **Custom Theme:** Create `src/gradio_chat_agent/ui/theme.py` using Gradio's `Theme` class to establish a consistent brand identity (colors, fonts, spacing).
-- [ ] **CSS Styling:** Inject custom CSS into the `gr.Blocks` layout to refine the appearance of Chatbot bubbles, Plan Preview blocks, and state JSON viewers.
+- [x] **Custom Theme:** Create `src/gradio_chat_agent/ui/theme.py` using Gradio's `Theme` class to establish a consistent brand identity (colors, fonts, spacing).
+- [x] **CSS Styling:** Inject custom CSS into the `gr.Blocks` layout to refine the appearance of Chatbot bubbles, Plan Preview blocks, and state JSON viewers.
 - [ ] **Session Token Management:** Update the UI state to include `session_token` handling for future authenticated OIDC requests.
 - [ ] **Raw Trace Inspectors:** Add specialized tabs in the State Inspector to display the raw JSON of the last `ChatIntent` and `ExecutionResult` for developer debugging.
 - [ ] **Visual Action Feedback:** Implement "Success/Failure" animations or status indicators directly on the components in the State Inspector.
