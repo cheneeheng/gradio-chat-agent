@@ -46,6 +46,284 @@ CUSTOM_CSS = """
 """
 
 
+class UIController:
+    """Controller for handling UI events and interacting with the engine."""
+
+    def __init__(self, engine: ExecutionEngine, adapter: AgentAdapter):
+        self.engine = engine
+        self.adapter = adapter
+
+    def fetch_state(self, pid: str) -> dict:
+        """Fetch latest state components for a project."""
+        snapshot = self.engine.repository.get_latest_snapshot(pid)
+        if snapshot:
+            return snapshot.components
+        return {}
+
+    def fetch_facts_df(self, pid: str, uid: str) -> list:
+        """Fetch session facts as a list of lists for Dataframe."""
+        facts = self.engine.repository.get_session_facts(pid, uid)
+        return [[k, str(v)] for k, v in facts.items()]
+
+    def fetch_members_df(self, pid: str) -> list:
+        """Fetch project members as a list of lists for Dataframe."""
+        members = self.engine.repository.get_project_members(pid)
+        return [[m["user_id"], m["role"]] for m in members]
+
+    def refresh_ui(self, pid: str, uid: str):
+        """Refresh all UI components."""
+        state = self.fetch_state(pid)
+        reg_info = {
+            "components": [
+                c.component_id for c in self.engine.registry.list_components()
+            ],
+            "actions": [
+                a.action_id for a in self.engine.registry.list_actions()
+            ],
+        }
+        facts_data = self.fetch_facts_df(pid, uid)
+        members_data = self.fetch_members_df(pid)
+        return (
+            state,
+            {},
+            reg_info,
+            facts_data,
+            members_data,
+        )
+
+    def on_add_fact(self, pid: str, uid: str, key: str, val: str):
+        """Handler for adding a session fact."""
+        if key:
+            self.engine.repository.save_session_fact(pid, uid, key, val)
+        return self.fetch_facts_df(pid, uid), "", ""
+
+    def on_delete_fact(self, pid: str, uid: str, key: str):
+        """Handler for deleting a session fact."""
+        if key:
+            self.engine.repository.delete_session_fact(pid, uid, key)
+        return self.fetch_facts_df(pid, uid), ""
+
+    def on_add_member(self, pid: str, uid: str, target_uid: str, role: str):
+        """Handler for adding a project member."""
+        if target_uid and role:
+            self.engine.repository.add_project_member(pid, target_uid, role)
+        return self.fetch_members_df(pid), "", "viewer"
+
+    def on_remove_member(self, pid: str, uid: str, target_uid: str):
+        """Handler for removing a project member."""
+        if target_uid:
+            self.engine.repository.remove_project_member(pid, target_uid)
+        return self.fetch_members_df(pid), ""
+
+    def on_submit(self, message_data, history, pid, uid, mode):
+        """Main handler for chat message submission."""
+        # Parse MultimodalTextbox input
+        if isinstance(message_data, dict):
+            message = message_data.get("text", "")
+            files = message_data.get("files", [])
+        else:
+            message = str(message_data)
+            files = []
+
+        # 1. Add user message to history
+        new_history = history + [{"role": "user", "content": message}]
+
+        # 2. Fetch context
+        snapshot = self.engine.repository.get_latest_snapshot(pid)
+        if not snapshot:
+            from gradio_chat_agent.models.state_snapshot import StateSnapshot
+
+            snapshot = StateSnapshot(snapshot_id="init", components={})
+
+        state_dict = snapshot.components
+        facts = self.engine.repository.get_session_facts(pid, uid)
+
+        comp_reg = {
+            c.component_id: c.model_dump()
+            for c in self.engine.registry.list_components()
+        }
+        act_reg = {
+            a.action_id: a.model_dump()
+            for a in self.engine.registry.list_actions()
+        }
+
+        # Media processing
+        media = None
+        if files:
+            file_path = files[0]
+            media = encode_media(file_path)
+            media["type"] = "image"
+
+        try:
+            result = self.adapter.message_to_intent_or_plan(
+                message=message,
+                history=new_history,
+                state_snapshot=state_dict,
+                component_registry=comp_reg,
+                action_registry=act_reg,
+                execution_mode=mode,
+                facts=facts,
+                media=media,
+            )
+        except Exception as e:
+            err_msg = f"Agent Error: {str(e)}"
+            new_history.append({"role": "assistant", "content": err_msg})
+            return (
+                "",
+                new_history,
+                state_dict,
+                {"error": str(e)},
+                gr.update(),
+                gr.update(visible=False),
+                None,
+            )
+
+        # 4. Handle Result
+        if isinstance(result, ExecutionPlan):
+            plan_md = f"## Proposed Plan (ID: {result.plan_id})\n"
+            for i, step in enumerate(result.steps):
+                plan_md += f"{i + 1}. **{step.action_id}**: `{step.inputs}`\n"
+
+            new_history.append(
+                {
+                    "role": "assistant",
+                    "content": "I have proposed a plan. Please review it below.",
+                }
+            )
+
+            return (
+                "",
+                new_history,
+                state_dict,
+                {},
+                plan_md,
+                gr.update(visible=True),
+                result,
+            )
+
+        elif isinstance(result, ChatIntent):
+            intent = result
+            if intent.type == IntentType.CLARIFICATION_REQUEST:
+                new_history.append(
+                    {"role": "assistant", "content": intent.question}
+                )
+                return (
+                    "",
+                    new_history,
+                    state_dict,
+                    {},
+                    "No plan pending.",
+                    gr.update(visible=False),
+                    None,
+                )
+
+            elif intent.type == IntentType.ACTION_CALL:
+                exec_result = self.engine.execute_intent(
+                    pid, intent, user_roles=["admin"], user_id=uid
+                )
+
+                if exec_result.status == "success":
+                    resp = f"Executed `{intent.action_id}`.\n\nResult: {exec_result.message}"
+                    new_history.append({"role": "assistant", "content": resp})
+
+                    new_snapshot = self.engine.repository.get_latest_snapshot(
+                        pid
+                    )
+                    new_state = new_snapshot.components if new_snapshot else {}
+
+                    return (
+                        "",
+                        new_history,
+                        new_state,
+                        exec_result.state_diff,
+                        "No plan pending.",
+                        gr.update(visible=False),
+                        None,
+                    )
+
+                elif (
+                    exec_result.error
+                    and exec_result.error.code == "confirmation_required"
+                ):
+                    resp = f"Action `{intent.action_id}` requires confirmation. Please type 'confirm' to proceed."
+                    new_history.append({"role": "assistant", "content": resp})
+                    return (
+                        "",
+                        new_history,
+                        state_dict,
+                        {},
+                        "No plan pending.",
+                        gr.update(visible=False),
+                        None,
+                    )
+
+                else:
+                    resp = f"Action Failed/Rejected: {exec_result.message}"
+                    new_history.append({"role": "assistant", "content": resp})
+                    return (
+                        "",
+                        new_history,
+                        state_dict,
+                        {},
+                        "No plan pending.",
+                        gr.update(visible=False),
+                        None,
+                    )
+
+        return (
+            "",
+            new_history,
+            state_dict,
+            {},
+            "No plan pending.",
+            gr.update(visible=False),
+            None,
+        )
+
+    def on_approve_plan(self, plan, history, pid, uid):
+        """Handler for approving a pending plan."""
+        if not plan:
+            return (
+                history,
+                {},
+                {},
+                "No plan",
+                gr.update(visible=False),
+                None,
+            )
+
+        results = self.engine.execute_plan(
+            pid, plan, user_roles=["admin"], user_id=uid
+        )
+
+        summary = "### Plan Execution Result\n"
+        final_diff = []
+        for res in results:
+            status_icon = "✅" if res.status == "success" else "❌"
+            summary += f"- {status_icon} **{res.action_id}**: {res.message}\n"
+            if res.state_diff:
+                final_diff.extend(res.state_diff)
+
+        history.append({"role": "assistant", "content": summary})
+
+        snapshot = self.engine.repository.get_latest_snapshot(pid)
+        new_state = snapshot.components if snapshot else {}
+
+        return (
+            history,
+            new_state,
+            final_diff,
+            "Plan Executed.",
+            gr.update(visible=False),
+            None,
+        )
+
+    def on_reject_plan(self, history):
+        """Handler for rejecting a pending plan."""
+        history.append({"role": "assistant", "content": "Plan rejected."})
+        return history, "Plan rejected.", gr.update(visible=False), None
+
+
 def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
     """Constructs the Gradio UI and sets up event handlers.
 
@@ -57,6 +335,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         A Gradio gr.Blocks object containing the application layout.
     """
     api = ApiEndpoints(engine)
+    controller = UIController(engine, adapter)
     theme = AgentTheme()
 
     with gr.Blocks(title="Gradio Chat Agent", theme=theme, css=CUSTOM_CSS) as demo:
@@ -129,11 +408,11 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                                 mem_key_input = gr.Textbox(label="Key")
                                 mem_val_input = gr.Textbox(label="Value")
                             add_fact_btn = gr.Button("Add/Update Fact", size="sm")
-
+                            
                             with gr.Row():
                                 del_key_input = gr.Textbox(label="Key to Delete")
                                 del_fact_btn = gr.Button("Delete Fact", size="sm", variant="stop")
-
+                            
                             refresh_mem_btn = gr.Button("Refresh Memory", size="sm", variant="secondary")
 
                     with gr.Tab("Team"):
@@ -154,300 +433,21 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             with gr.Row():
                                 add_member_btn = gr.Button("Add/Update Member", size="sm")
                                 remove_member_btn = gr.Button("Remove Member", size="sm", variant="stop")
-
+                            
                             refresh_team_btn = gr.Button("Refresh Team", size="sm", variant="secondary")
 
-        # --- Event Handlers ---
-
-        def fetch_state(pid):
-            """Internal helper to fetch latest state for a project."""
-            snapshot = engine.repository.get_latest_snapshot(pid)
-            if snapshot:
-                return snapshot.components
-            return {}
-
-        def fetch_facts_df(pid, uid):
-            """Internal helper to fetch facts as dataframe."""
-            facts = engine.repository.get_session_facts(pid, uid)
-            return [[k, str(v)] for k, v in facts.items()]
-
-        def fetch_members_df(pid):
-            """Internal helper to fetch members as dataframe."""
-            members = engine.repository.get_project_members(pid)
-            return [[m["user_id"], m["role"]] for m in members]
-        def refresh_ui(pid, uid):
-            """Internal handler to refresh all UI components."""
-            state = fetch_state(pid)
-            # Registry info
-            reg_info = {
-                "components": [
-                    c.component_id for c in engine.registry.list_components()
-                ],
-                "actions": [
-                    a.action_id for a in engine.registry.list_actions()
-                ],
-            }
-            facts_data = fetch_facts_df(pid, uid)
-            members_data = fetch_members_df(pid)
-            return (
-                state,
-                {},
-                reg_info,
-                facts_data,
-                members_data,
-            )
+        # --- Event Bindings ---
 
         # Initial Load
         demo.load(
-            refresh_ui,
+            controller.refresh_ui,
             inputs=[project_id_state, user_id_state],
             outputs=[state_json, diff_json, registry_json, memory_df, team_df],
         )
 
-        # Memory Handlers
-        def on_add_fact(pid, uid, key, val):
-            if key:
-                engine.repository.save_session_fact(pid, uid, key, val)
-            return fetch_facts_df(pid, uid), "", ""
-
-        add_fact_btn.click(
-            on_add_fact,
-            inputs=[project_id_state, user_id_state, mem_key_input, mem_val_input],
-            outputs=[memory_df, mem_key_input, mem_val_input],
-        )
-
-        def on_delete_fact(pid, uid, key):
-            if key:
-                engine.repository.delete_session_fact(pid, uid, key)
-            return fetch_facts_df(pid, uid), ""
-
-        del_fact_btn.click(
-            on_delete_fact,
-            inputs=[project_id_state, user_id_state, del_key_input],
-            outputs=[memory_df, del_key_input],
-        )
-
-        refresh_mem_btn.click(
-            fetch_facts_df,
-            inputs=[project_id_state, user_id_state],
-            outputs=[memory_df],
-        )
-
-        # Team Handlers
-        def on_add_member(pid, uid, target_uid, role):
-            # TODO: Check if uid is admin (omitted for now as default user is admin)
-            if target_uid and role:
-                engine.repository.add_project_member(pid, target_uid, role)
-            return fetch_members_df(pid), "", "viewer"
-
-        add_member_btn.click(
-            on_add_member,
-            inputs=[project_id_state, user_id_state, team_user_input, team_role_input],
-            outputs=[team_df, team_user_input, team_role_input],
-        )
-
-        def on_remove_member(pid, uid, target_uid):
-                # TODO: Check if uid is admin
-            if target_uid:
-                engine.repository.remove_project_member(pid, target_uid)
-            return fetch_members_df(pid), ""
-
-        remove_member_btn.click(
-            on_remove_member,
-            inputs=[project_id_state, user_id_state, team_user_input],
-            outputs=[team_df, team_user_input],
-        )
-
-        refresh_team_btn.click(
-            fetch_members_df,
-            inputs=[project_id_state],
-            outputs=[team_df],
-        )
-
-        # Chat Interaction
-        def on_submit(message_data, history, pid, uid, mode):
-            """Main handler for chat message submission."""
-            # Parse MultimodalTextbox input
-            if isinstance(message_data, dict):
-                message = message_data.get("text", "")
-                files = message_data.get("files", [])
-            else:
-                message = str(message_data)
-                files = []
-
-            # 1. Add user message to history
-            new_history = history + [{"role": "user", "content": message}]
-
-            # 2. Fetch context
-            snapshot = engine.repository.get_latest_snapshot(pid)
-            if not snapshot:
-                from gradio_chat_agent.models.state_snapshot import (
-                    StateSnapshot,
-                )
-
-                snapshot = StateSnapshot(snapshot_id="init", components={})
-
-            state_dict = snapshot.components
-            facts = engine.repository.get_session_facts(pid, uid)
-
-            comp_reg = {
-                c.component_id: c.model_dump()
-                for c in engine.registry.list_components()
-            }
-            act_reg = {
-                a.action_id: a.model_dump()
-                for a in engine.registry.list_actions()
-            }
-
-            # Media processing
-            media = None
-            if files:
-                # Use the first file
-                file_path = files[0]
-                media = encode_media(file_path)
-                media["type"] = "image" # Force image for now
-
-            try:
-                result = adapter.message_to_intent_or_plan(
-                    message=message,
-                    history=new_history,
-                    state_snapshot=state_dict,
-                    component_registry=comp_reg,
-                    action_registry=act_reg,
-                    execution_mode=mode,
-                    facts=facts,
-                    media=media,
-                )
-            except Exception as e:
-                err_msg = f"Agent Error: {str(e)}"
-                new_history.append({"role": "assistant", "content": err_msg})
-                # Return empty plan/pending state
-                return (
-                    "",
-                    new_history,
-                    state_dict,
-                    {"error": str(e)},
-                    gr.update(),
-                    gr.update(visible=False),
-                    None,
-                )
-
-            # 4. Handle Result
-            if isinstance(result, ExecutionPlan):
-                # Handle Plan
-                plan_md = f"## Proposed Plan (ID: {result.plan_id})\n"
-                for i, step in enumerate(result.steps):
-                    plan_md += (
-                        f"{i + 1}. **{step.action_id}**: `{step.inputs}`\n"
-                    )
-
-                new_history.append(
-                    {
-                        "role": "assistant",
-                        "content": "I have proposed a plan. Please review it below.",
-                    }
-                )
-
-                return (
-                    "",
-                    new_history,
-                    state_dict,
-                    {},
-                    plan_md,
-                    gr.update(visible=True),
-                    result,
-                )
-
-            elif isinstance(result, ChatIntent):
-                intent = result
-                if intent.type == IntentType.CLARIFICATION_REQUEST:
-                    new_history.append(
-                        {"role": "assistant", "content": intent.question}
-                    )
-                    return (
-                        "",
-                        new_history,
-                        state_dict,
-                        {},
-                        "No plan pending.",
-                        gr.update(visible=False),
-                        None,
-                    )
-
-                elif intent.type == IntentType.ACTION_CALL:
-                    # Execute single action
-                    exec_result = engine.execute_intent(
-                        pid, intent, user_roles=["admin"], user_id=uid
-                    )
-
-                    if exec_result.status == "success":
-                        resp = f"Executed `{intent.action_id}`.\n\nResult: {exec_result.message}"
-                        new_history.append(
-                            {"role": "assistant", "content": resp}
-                        )
-
-                        new_snapshot = engine.repository.get_latest_snapshot(
-                            pid
-                        )
-                        new_state = (
-                            new_snapshot.components if new_snapshot else {}
-                        )
-
-                        return (
-                            "",
-                            new_history,
-                            new_state,
-                            exec_result.state_diff,
-                            "No plan pending.",
-                            gr.update(visible=False),
-                            None,
-                        )
-
-                    elif (
-                        exec_result.error
-                        and exec_result.error.code == "confirmation_required"
-                    ):
-                        resp = f"Action `{intent.action_id}` requires confirmation. Please type 'confirm' to proceed."
-                        new_history.append(
-                            {"role": "assistant", "content": resp}
-                        )
-                        return (
-                            "",
-                            new_history,
-                            state_dict,
-                            {},
-                            "No plan pending.",
-                            gr.update(visible=False),
-                            None,
-                        )
-
-                    else:
-                        resp = f"Action Failed/Rejected: {exec_result.message}"
-                        new_history.append(
-                            {"role": "assistant", "content": resp}
-                        )
-                        return (
-                            "",
-                            new_history,
-                            state_dict,
-                            {},
-                            "No plan pending.",
-                            gr.update(visible=False),
-                            None,
-                        )
-
-            return (
-                "",
-                new_history,
-                state_dict,
-                {},
-                "No plan pending.",
-                gr.update(visible=False),
-                None,
-            )
-
+        # Chat
         submit_btn.click(
-            on_submit,
+            controller.on_submit,
             inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
             outputs=[
                 msg_input,
@@ -459,9 +459,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 pending_plan_state,
             ],
         )
-
         msg_input.submit(
-            on_submit,
+            controller.on_submit,
             inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
             outputs=[
                 msg_input,
@@ -474,46 +473,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             ],
         )
 
-        # Plan Approval Handlers
-        def on_approve_plan(plan, history, pid, uid):
-            if not plan:
-                return (
-                    history,
-                    {},
-                    {},
-                    "No plan",
-                    gr.update(visible=False),
-                    None,
-                )
-
-            results = engine.execute_plan(pid, plan, user_roles=["admin"], user_id=uid)
-
-            summary = "### Plan Execution Result\n"
-            final_diff = []
-            for res in results:
-                status_icon = "✅" if res.status == "success" else "❌"
-                summary += (
-                    f"- {status_icon} **{res.action_id}**: {res.message}\n"
-                )
-                if res.state_diff:
-                    final_diff.extend(res.state_diff)
-
-            history.append({"role": "assistant", "content": summary})
-
-            snapshot = engine.repository.get_latest_snapshot(pid)
-            new_state = snapshot.components if snapshot else {}
-
-            return (
-                history,
-                new_state,
-                final_diff,
-                "Plan Executed.",
-                gr.update(visible=False),
-                None,
-            )
-
+        # Plan Approval
         approve_plan_btn.click(
-            on_approve_plan,
+            controller.on_approve_plan,
             inputs=[pending_plan_state, chatbot, project_id_state, user_id_state],
             outputs=[
                 chatbot,
@@ -524,18 +486,47 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 pending_plan_state,
             ],
         )
-
-        def on_reject_plan(history):
-            history.append({"role": "assistant", "content": "Plan rejected."})
-            return history, "Plan rejected.", gr.update(visible=False), None
-
         reject_plan_btn.click(
-            on_reject_plan,
+            controller.on_reject_plan,
             inputs=[chatbot],
             outputs=[chatbot, plan_display, plan_group, pending_plan_state],
         )
 
-        # --- API Endpoints ---
+        # Memory Handlers
+        add_fact_btn.click(
+            controller.on_add_fact,
+            inputs=[project_id_state, user_id_state, mem_key_input, mem_val_input],
+            outputs=[memory_df, mem_key_input, mem_val_input],
+        )
+        del_fact_btn.click(
+            controller.on_delete_fact,
+            inputs=[project_id_state, user_id_state, del_key_input],
+            outputs=[memory_df, del_key_input],
+        )
+        refresh_mem_btn.click(
+            controller.fetch_facts_df,
+            inputs=[project_id_state, user_id_state],
+            outputs=[memory_df],
+        )
+
+        # Team Handlers
+        add_member_btn.click(
+            controller.on_add_member,
+            inputs=[project_id_state, user_id_state, team_user_input, team_role_input],
+            outputs=[team_df, team_user_input, team_role_input],
+        )
+        remove_member_btn.click(
+            controller.on_remove_member,
+            inputs=[project_id_state, user_id_state, team_user_input],
+            outputs=[team_df, team_user_input],
+        )
+        refresh_team_btn.click(
+            controller.fetch_members_df,
+            inputs=[project_id_state],
+            outputs=[team_df],
+        )
+
+        # API Endpoints (Keeping existing connections)
         with gr.Group(visible=False):
             # execute_action
             api_project_id = gr.Textbox(label="project_id")
@@ -617,5 +608,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 outputs=[api_audit_result],
                 api_name="get_audit_log",
             )
+
+    return demo
 
     return demo
