@@ -48,10 +48,21 @@
     },
     "invariants": {
       "type": "array",
-      "description": "Human-readable invariants that must always hold for this component.",
+      "description": "Conditions that must always hold true for this component.",
       "items": {
-        "type": "string",
-        "description": "Invariant expressed in natural language."
+        "type": "object",
+        "required": ["description", "expr"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Human-readable explanation."
+          },
+          "expr": {
+            "type": "string",
+            "description": "Python expression evaluated against the global state."
+          }
+        },
+        "additionalProperties": false
       },
       "default": []
     },

@@ -39,17 +39,17 @@
 
 ## 4. Governance & Policy Enforcement
 
-- [ ] **Invariant Enforcement:** Update the `ExecutionEngine` to validate component `invariants` after every action execution, rolling back state if a constraint is violated.
-- [ ] **Action Visibility Filtering:** Implement logic in the `Registry` and `ApiEndpoints` to filter available actions based on the `visibility` field and user roles.
-- [ ] **Action Budgets:** Implement a per-action cost tracking system (`ActionBudgets`) to allow granular control over expensive operations.
-- [ ] **Budget Enforcement:** Implement action cost calculation and track/enforce `daily_budget` within the `ExecutionEngine`.
-- [ ] **Hourly Rate Limiting:** Extend the engine to enforce `per_hour` limits in addition to `per_minute`.
-- [ ] **Execution Windows:** Implement time-of-day and day-of-week restrictions in governance policies and validate them in the engine.
-- [ ] **Approval Workflows:** Implement a `pending_approval` status for actions that exceed cost thresholds or risk levels.
-- [ ] **Project Lifecycle Enforcement:** Add checks to the `ExecutionEngine` to block intents if a project is archived or locked.
+- [x] **Invariant Enforcement:** Update the `ExecutionEngine` to validate component `invariants` after every action execution, rolling back state if a constraint is violated.
+- [x] **Action Visibility Filtering:** Implement logic in the `Registry` and `ApiEndpoints` to filter available actions based on the `visibility` field and user roles.
+- [x] **Action Budgets:** Implement a per-action cost tracking system (`ActionBudgets`) to allow granular control over expensive operations.
+- [x] **Budget Enforcement:** Implement action cost calculation and track/enforce `daily_budget` within the `ExecutionEngine`.
+- [x] **Hourly Rate Limiting:** Extend the engine to enforce `per_hour` limits in addition to `per_minute`.
+- [x] **Execution Windows:** Implement time-of-day and day-of-week restrictions in governance policies and validate them in the engine.
+- [x] **Approval Workflows:** Implement a `pending_approval` status for actions that exceed cost thresholds or risk levels.
+- [x] **Project Lifecycle Enforcement:** Add checks to the `ExecutionEngine` to block intents if a project is archived or locked.
 - [ ] **Advanced Policy Engine:** Transition from simple JSON limit checks to a more robust policy engine (e.g., OPA/Rego or a custom DSL).
-- [ ] **Safer Preconditions:** Replace `eval()` in the `ExecutionEngine` with a restricted evaluator (e.g., `RestrictedPython` or an AST-based validator).
-- [ ] **Centralized Engine Configuration:** Implement an `EngineConfig` model in `engine.py` to manage runtime flags like `require_confirmed_for_confirmation_required`, decoupling core logic from environment-specific defaults as defined in the configuration docs.
+- [x] **Safer Preconditions:** Replace `eval()` in the `ExecutionEngine` with a restricted evaluator (e.g., `RestrictedPython` or an AST-based validator).
+- [x] **Centralized Engine Configuration:** Implement an `EngineConfig` model in `engine.py` to manage runtime flags like `require_confirmed_for_confirmation_required`, decoupling core logic from environment-specific defaults as defined in the configuration docs.
 
 ## 5. Automation & Background Tasks
 

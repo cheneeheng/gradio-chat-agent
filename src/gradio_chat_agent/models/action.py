@@ -110,3 +110,6 @@ class ActionDeclaration(BaseModel):
     permission: ActionPermission = Field(
         ..., description="Security and governance settings."
     )
+    cost: float = Field(
+        default=1.0, description="Abstract cost of executing this action."
+    )

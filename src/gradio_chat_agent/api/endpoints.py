@@ -188,16 +188,32 @@ class ApiEndpoints:
 
         return result.model_dump(mode="json")
 
-    def get_registry(self, project_id: str) -> dict[str, Any]:
+    def get_registry(self, project_id: str, user_id: str | None = None) -> dict[str, Any]:
         """Returns the current Action and Component registries.
 
         Args:
-            project_id: The target project ID (unused for now as registry is global/static
-                        in this version, but kept for API compat).
+            project_id: The target project ID.
+            user_id: Optional user ID to filter actions by visibility.
 
         Returns:
             Object containing components and actions declarations.
         """
+        # Determine user role
+        user_role = "viewer"
+        if user_id:
+            members = self.engine.repository.get_project_members(project_id)
+            for m in members:
+                if m["user_id"] == user_id:
+                    user_role = m["role"]
+                    break
+
+        actions = self.engine.registry.list_actions()
+        if user_role != "admin":
+            actions = [
+                a for a in actions 
+                if a.permission.visibility != "developer"
+            ]
+
         return {
             "components": [
                 c.model_dump(mode="json")
@@ -205,7 +221,7 @@ class ApiEndpoints:
             ],
             "actions": [
                 a.model_dump(mode="json")
-                for a in self.engine.registry.list_actions()
+                for a in actions
             ],
         }
 

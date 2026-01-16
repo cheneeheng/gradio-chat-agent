@@ -5,13 +5,15 @@ gatekeeper for all state mutations. It enforces governance policies, validates
 inputs, checks permissions, and records audit logs.
 """
 
+import ast
 import copy
 import hashlib
 import threading
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import jsonschema
+from pydantic import BaseModel
 
 from gradio_chat_agent.models.enums import (
     ActionRisk,
@@ -30,6 +32,17 @@ from gradio_chat_agent.registry.abstract import Registry
 from gradio_chat_agent.utils import compute_state_diff
 
 
+class EngineConfig(BaseModel):
+    """Configuration for the Execution Engine.
+
+    Attributes:
+        require_confirmed_for_confirmation_required: If True, strictly enforces
+            the 'confirmed' flag for actions that require it.
+    """
+
+    require_confirmed_for_confirmation_required: bool = True
+
+
 class ExecutionEngine:
     """The central authority for executing intents and managing state.
 
@@ -41,15 +54,22 @@ class ExecutionEngine:
     5. Persistence of results and snapshots.
     """
 
-    def __init__(self, registry: Registry, repository: StateRepository):
+    def __init__(
+        self,
+        registry: Registry,
+        repository: StateRepository,
+        config: Optional[EngineConfig] = None,
+    ):
         """Initializes the engine with necessary dependencies.
 
         Args:
             registry: Source of truth for component/action definitions.
             repository: Persistence layer for state and history.
+            config: Optional configuration for the engine.
         """
         self.registry = registry
         self.repository = repository
+        self.config = config or EngineConfig()
         self.project_locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
 
@@ -66,6 +86,103 @@ class ExecutionEngine:
             if project_id not in self.project_locks:
                 self.project_locks[project_id] = threading.Lock()
             return self.project_locks[project_id]
+
+    def _is_within_execution_window(self, windows: list[dict]) -> bool:
+        """Checks if the current time is within any of the allowed windows.
+
+        Args:
+            windows: A list of window dictionaries, each containing:
+                - days: List of lowercase day abbreviations (mon, tue, ...).
+                - hours: List of two strings [HH:MM, HH:MM] in 24h format.
+
+        Returns:
+            True if current UTC time is within an allowed window, False otherwise.
+        """
+        from datetime import datetime, timezone
+        
+        now = datetime.now(timezone.utc)
+        current_day = now.strftime("%a").lower()
+        current_time_str = now.strftime("%H:%M")
+
+        for window in windows:
+            allowed_days = window.get("days", [])
+            if current_day not in allowed_days:
+                continue
+            
+            allowed_hours = window.get("hours", [])
+            if len(allowed_hours) == 2:
+                start_str, end_str = allowed_hours
+                if start_str <= current_time_str <= end_str:
+                    return True
+        
+        return False
+
+    def _safe_eval(self, expr: str, context: dict) -> Any:
+        """Safely evaluates a Python expression using AST.
+
+        Only allows a very restricted subset of Python:
+        - Constant literals (numbers, strings, booleans, None).
+        - Attribute access and Subscripting (for dict/object access).
+        - Basic binary/unary operators.
+        - Name lookups in the provided context.
+        - NO function calls, NO comprehensions, NO imports.
+
+        Args:
+            expr: The expression string to evaluate.
+            context: The variables available to the expression.
+
+        Returns:
+            The result of the evaluation.
+
+        Raises:
+            ValueError: If the expression contains forbidden nodes.
+        """
+        tree = ast.parse(expr, mode="eval")
+
+        # Define allowed node types
+        allowed_nodes = (
+            ast.Expression,
+            ast.Constant,
+            ast.Name,
+            ast.Load,
+            ast.Attribute,
+            ast.Subscript,
+            ast.Index,  # For older Python versions
+            ast.Slice,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.Compare,
+            ast.BoolOp,
+            ast.And,
+            ast.Or,
+            ast.Not,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.Mod,
+            ast.Pow,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Is,
+            ast.IsNot,
+            ast.In,
+            ast.NotIn,
+            ast.USub,
+            ast.UAdd,
+        )
+
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                raise ValueError(f"Forbidden expression node: {type(node).__name__}")
+
+        # Compile and evaluate in a restricted environment
+        code = compile(tree, filename="<safe_eval>", mode="eval")
+        return eval(code, {"__builtins__": {}}, context)
 
     def execute_plan(
         self,
@@ -175,6 +292,27 @@ class ExecutionEngine:
                 project_id, intent, "Missing action_id."
             )
 
+        # 1.3 Project Lifecycle Check
+        if self.repository.is_project_archived(project_id):
+            return self._create_rejection(
+                project_id,
+                intent,
+                f"Project {project_id} is archived and does not allow executions.",
+                code="project_archived",
+            )
+
+        # 1.5 Execution Window Check
+        limits = self.repository.get_project_limits(project_id)
+        windows = limits.get("execution_windows", {}).get("allowed")
+        if windows and not simulate:
+            if not self._is_within_execution_window(windows):
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    "Outside of allowed execution window.",
+                    code="execution_window_violation",
+                )
+
         # Handle Memory Actions (System Actions that write to Facts table)
         if intent.action_id in ["memory.remember", "memory.forget"]:
             if not user_id:
@@ -253,7 +391,10 @@ class ExecutionEngine:
                 )
 
             # 5. Authorization & Governance
-            # Fetch Limits
+            # Fetch Limits (already fetched in 1.5, reuse if possible or re-fetch for lock safety)
+            # For simplicity and freshness inside the lock, we re-fetch if needed, 
+            # but let's just use the one from above for now if it's fine.
+            # Actually, better re-fetch inside lock to be safe.
             limits = self.repository.get_project_limits(project_id)
 
             # Rate Limiting: Check actions/minute
@@ -272,6 +413,40 @@ class ExecutionEngine:
                         code="rate_limit",
                     )
 
+            # Rate Limiting: Check actions/hour
+            rph_limit = (
+                limits.get("limits", {}).get("rate", {}).get("per_hour")
+            )
+            if rph_limit and not simulate:
+                recent_count = self.repository.count_recent_executions(
+                    project_id, minutes=60
+                )
+                if recent_count >= rph_limit:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        f"Hourly rate limit exceeded ({rph_limit}/hour).",
+                        code="rate_limit",
+                    )
+
+            # Budget Check
+            if not simulate:
+                daily_budget = (
+                    limits.get("limits", {}).get("budget", {}).get("daily")
+                )
+                if daily_budget is not None:
+                    current_usage = self.repository.get_daily_budget_usage(
+                        project_id
+                    )
+                    action_cost = getattr(action, "cost", 1.0)
+                    if current_usage + action_cost > daily_budget:
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            f"Daily budget exceeded ({current_usage:.1f} + {action_cost:.1f} > {daily_budget}).",
+                            code="budget_exceeded",
+                        )
+
             # Role check (Simple implementation: assume 'admin' has all access)
             # In a real system, we'd check action.permission against user_roles
             if (
@@ -285,17 +460,40 @@ class ExecutionEngine:
                 )
 
             # Confirmation check
-            if (
-                action.permission.confirmation_required
-                or action.permission.risk == ActionRisk.HIGH
-            ):
-                if not intent.confirmed:
-                    return self._create_rejection(
-                        project_id,
-                        intent,
-                        "Confirmation required.",
-                        code="confirmation_required",
-                    )
+            if self.config.require_confirmed_for_confirmation_required:
+                if (
+                    action.permission.confirmation_required
+                    or action.permission.risk == ActionRisk.HIGH
+                ):
+                    if not intent.confirmed:
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            "Confirmation required.",
+                            code="confirmation_required",
+                        )
+
+            # Approval Workflow Check
+            if not simulate and not intent.confirmed:
+                approval_rules = limits.get("approvals", [])
+                action_cost = getattr(action, "cost", 1.0)
+                
+                for rule in approval_rules:
+                    min_cost = rule.get("min_cost", 0)
+                    required_role = rule.get("required_role", "admin")
+                    
+                    if action_cost >= min_cost and required_role not in user_roles:
+                        # This action triggers an approval requirement
+                        result = ExecutionResult(
+                            request_id=intent.request_id,
+                            action_id=intent.action_id,
+                            status=ExecutionStatus.PENDING_APPROVAL,
+                            message=f"Action requires approval from a {required_role} (Cost: {action_cost}).",
+                            state_snapshot_id="none",
+                        )
+                        # We save it to history so admins can see pending requests
+                        self.repository.save_execution(project_id, result)
+                        return result
 
             # 6. Schema Validation
             try:
@@ -312,11 +510,7 @@ class ExecutionEngine:
             eval_context = {"state": current_snapshot.components}
             for precondition in action.preconditions:
                 try:
-                    # WARNING: eval is used here. Ensure registry sources are trusted.
-                    # In production, use a RestrictedPython or AST-based evaluator.
-                    if not eval(
-                        precondition.expr, {"__builtins__": {}}, eval_context
-                    ):
+                    if not self._safe_eval(precondition.expr, eval_context):
                         return self._create_rejection(
                             project_id,
                             intent,
@@ -358,6 +552,28 @@ class ExecutionEngine:
                     project_id, intent, f"Handler error: {str(e)}"
                 )
 
+            # 8.5 Invariant Check
+            for component in self.registry.list_components():
+                for invariant in component.invariants:
+                    try:
+                        if not self._safe_eval(
+                            invariant.expr,
+                            {"state": new_components},
+                        ):
+                            return self._create_failure(
+                                project_id,
+                                intent,
+                                f"Invariant violated for {component.component_id}: {invariant.description}",
+                                code="invariant_violation",
+                            )
+                    except Exception as e:
+                        return self._create_failure(
+                            project_id,
+                            intent,
+                            f"Error evaluating invariant for {component.component_id}: {str(e)}",
+                            code="invariant_error",
+                        )
+
             # 9. Commit
             new_snapshot_id = (
                 str(uuid.uuid4()) if not simulate else "simulated"
@@ -365,6 +581,8 @@ class ExecutionEngine:
 
             # Media Hashing
             metadata = {}
+            metadata["cost"] = getattr(action, "cost", 1.0)
+
             if intent.media and intent.media.data:
                 media_hash = hashlib.sha256(
                     intent.media.data.encode("utf-8")

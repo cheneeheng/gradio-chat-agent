@@ -229,6 +229,9 @@ class Execution(Base):
     error: Mapped[Optional[dict[str, Any]]] = mapped_column(
         JSON, nullable=True
     )
+    metadata_: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        "metadata", JSON, nullable=True
+    )
 
     project: Mapped["Project"] = relationship(back_populates="executions")
 

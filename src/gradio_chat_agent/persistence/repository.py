@@ -151,6 +151,18 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def get_daily_budget_usage(self, project_id: str) -> float:
+        """Calculates the total cost of successful executions today.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            The sum of costs for all successful executions since midnight.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a webhook configuration by ID.
 
@@ -219,6 +231,18 @@ class StateRepository(ABC):
         Args:
             project_id: The unique identifier for the project.
             name: Human-readable name of the project.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def is_project_archived(self, project_id: str) -> bool:
+        """Checks if a project is archived.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            True if the project is archived, False otherwise.
         """
         pass  # pragma: no cover
 

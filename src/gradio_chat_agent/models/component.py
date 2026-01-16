@@ -29,6 +29,21 @@ class ComponentPermissions(BaseModel):
     )
 
 
+class ComponentInvariant(BaseModel):
+    """A condition that must always hold true for a component.
+
+    Attributes:
+        description: Human-readable explanation.
+        expr: Python expression evaluated against the global state.
+    """
+
+    description: str = Field(..., description="Human-readable explanation.")
+    expr: str = Field(
+        ...,
+        description="Python expression evaluated against the global state.",
+    )
+
+
 class ComponentDeclaration(BaseModel):
     """Complete definition of a registered UI component.
 
@@ -38,7 +53,7 @@ class ComponentDeclaration(BaseModel):
         description: Explanation of the component's purpose.
         state_schema: JSON Schema describing the component's state structure.
         permissions: Access control rules.
-        invariants: List of natural language invariants for the component.
+        invariants: List of invariants for the component.
         tags: Optional categorization tags.
     """
 
@@ -58,9 +73,9 @@ class ComponentDeclaration(BaseModel):
     permissions: ComponentPermissions = Field(
         ..., description="Access control rules."
     )
-    invariants: list[str] = Field(
+    invariants: list[ComponentInvariant] = Field(
         default_factory=list,
-        description="List of natural language invariants for the component.",
+        description="List of invariants for the component.",
     )
     tags: list[str] = Field(
         default_factory=list, description="Optional categorization tags."

@@ -53,11 +53,13 @@ class ExecutionStatus(str, Enum):
         SUCCESS: The action completed and state was updated.
         REJECTED: The action was blocked by policy, validation, or permission.
         FAILED: The action handler raised an exception during execution.
+        PENDING_APPROVAL: The action is waiting for human approval.
     """
 
     SUCCESS = "success"
     REJECTED = "rejected"
     FAILED = "failed"
+    PENDING_APPROVAL = "pending_approval"
 
 
 class StateDiffOp(str, Enum):

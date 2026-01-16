@@ -198,6 +198,27 @@ class InMemoryStateRepository(StateRepository):
                 count += 1
         return count
 
+    def get_daily_budget_usage(self, project_id: str) -> float:
+        """Calculates the total cost of successful executions today.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            The sum of costs for all successful executions since midnight.
+        """
+        history = self._executions.get(project_id, [])
+        now = datetime.now(timezone.utc)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure cutoff is naive if timestamps are naive
+        cutoff = midnight.replace(tzinfo=None)
+
+        total_cost = 0.0
+        for ex in history:
+            if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
+                total_cost += float(ex.metadata.get("cost", 0.0))
+        return total_cost
+
     def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a webhook configuration by ID.
 
@@ -267,6 +288,20 @@ class InMemoryStateRepository(StateRepository):
             "created_at": datetime.now(),
             "archived_at": None,
         }
+
+    def is_project_archived(self, project_id: str) -> bool:
+        """Checks if a project is archived.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            True if the project is archived, False otherwise.
+        """
+        project = self._projects.get(project_id)
+        if project and project.get("archived_at"):
+            return True
+        return False
 
     def archive_project(self, project_id: str):
         """Archives a project.

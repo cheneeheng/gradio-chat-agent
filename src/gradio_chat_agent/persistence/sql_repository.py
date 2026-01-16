@@ -148,6 +148,7 @@ class SQLStateRepository(StateRepository):
                 state_snapshot_id=result.state_snapshot_id,
                 state_diff=state_diff_json,
                 error=error_json,
+                metadata_=result.metadata,
             )
             session.add(db_exec)
             session.commit()
@@ -188,6 +189,7 @@ class SQLStateRepository(StateRepository):
                         state_snapshot_id=row.state_snapshot_id,
                         state_diff=diffs,
                         error=error,
+                        metadata=row.metadata_ or {},
                     )
                 )
             return results
@@ -332,6 +334,34 @@ class SQLStateRepository(StateRepository):
             )
             return session.execute(stmt).scalar() or 0
 
+    def get_daily_budget_usage(self, project_id: str) -> float:
+        """Calculates the total cost of successful executions today.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            The sum of costs for all successful executions since midnight.
+        """
+        now = datetime.now(timezone.utc)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure cutoff is naive if timestamps are naive (which they are in models)
+        cutoff = midnight.replace(tzinfo=None)
+
+        with self.SessionLocal() as session:
+            stmt = select(Execution).where(
+                Execution.project_id == project_id,
+                Execution.timestamp >= cutoff,
+                Execution.status == "success",
+            )
+            rows = session.execute(stmt).scalars().all()
+
+            total = 0.0
+            for row in rows:
+                if row.metadata_:
+                    total += float(row.metadata_.get("cost", 0.0))
+            return total
+
     def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a webhook configuration by ID.
 
@@ -465,6 +495,21 @@ class SQLStateRepository(StateRepository):
             project = Project(id=project_id, name=name)
             session.add(project)
             session.commit()
+
+    def is_project_archived(self, project_id: str) -> bool:
+        """Checks if a project is archived.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            True if the project is archived, False otherwise.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project and project.archived_at:
+                return True
+            return False
 
     def archive_project(self, project_id: str):
         """Archives a project.

@@ -147,6 +147,23 @@ class UIController:
             for a in self.engine.registry.list_actions()
         }
 
+        # Visibility Filtering
+        # 1. Determine user role for this project
+        members = self.engine.repository.get_project_members(pid)
+        user_role = "viewer"  # Default
+        for m in members:
+            if m["user_id"] == uid:
+                user_role = m["role"]
+                break
+        
+        # 2. Filter actions
+        # 'developer' visibility actions are only shown to 'admin'
+        if user_role != "admin":
+            act_reg = {
+                aid: adef for aid, adef in act_reg.items()
+                if adef["permission"]["visibility"] != "developer"
+            }
+
         # Media processing
         media = None
         if files:
@@ -219,7 +236,7 @@ class UIController:
 
             elif intent.type == IntentType.ACTION_CALL:
                 exec_result = self.engine.execute_intent(
-                    pid, intent, user_roles=["admin"], user_id=uid
+                    pid, intent, user_roles=[user_role], user_id=uid
                 )
 
                 if exec_result.status == "success":
@@ -246,6 +263,19 @@ class UIController:
                     and exec_result.error.code == "confirmation_required"
                 ):
                     resp = f"Action `{intent.action_id}` requires confirmation. Please type 'confirm' to proceed."
+                    new_history.append({"role": "assistant", "content": resp})
+                    return (
+                        "",
+                        new_history,
+                        state_dict,
+                        {},
+                        "No plan pending.",
+                        gr.update(visible=False),
+                        None,
+                    )
+
+                elif exec_result.status == ExecutionStatus.PENDING_APPROVAL:
+                    resp = f"Action `{intent.action_id}` is **pending approval**. {exec_result.message}"
                     new_history.append({"role": "assistant", "content": resp})
                     return (
                         "",
@@ -292,8 +322,16 @@ class UIController:
                 None,
             )
 
+        # Determine user role
+        members = self.engine.repository.get_project_members(pid)
+        user_role = "viewer"
+        for m in members:
+            if m["user_id"] == uid:
+                user_role = m["role"]
+                break
+
         results = self.engine.execute_plan(
-            pid, plan, user_roles=["admin"], user_id=uid
+            pid, plan, user_roles=[user_role], user_id=uid
         )
 
         summary = "### Plan Execution Result\n"
@@ -592,7 +630,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
             gr.Button("Get Registry API").click(
                 fn=api.get_registry,
-                inputs=[api_reg_project_id],
+                inputs=[api_reg_project_id, user_id_state],
                 outputs=[api_reg_result],
                 api_name="get_registry",
             )

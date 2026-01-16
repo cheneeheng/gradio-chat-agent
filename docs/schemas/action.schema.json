@@ -87,6 +87,11 @@
         }
       },
       "additionalProperties": false
+    },
+    "cost": {
+      "type": "number",
+      "description": "Abstract cost of executing this action.",
+      "default": 1.0
     }
   },
   "$defs": {
