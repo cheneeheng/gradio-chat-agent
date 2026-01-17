@@ -16,7 +16,6 @@ from typing import Any, Optional
 import jsonschema
 from pydantic import BaseModel
 
-from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.models.enums import (
     ActionRisk,
     ExecutionStatus,
@@ -29,9 +28,11 @@ from gradio_chat_agent.models.execution_result import (
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
+from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
 from gradio_chat_agent.utils import compute_state_diff
+
 
 logger = get_logger(__name__)
 
@@ -103,7 +104,7 @@ class ExecutionEngine:
             True if current UTC time is within an allowed window, False otherwise.
         """
         from datetime import datetime, timezone
-        
+
         now = datetime.now(timezone.utc)
         current_day = now.strftime("%a").lower()
         current_time_str = now.strftime("%H:%M")
@@ -112,13 +113,13 @@ class ExecutionEngine:
             allowed_days = window.get("days", [])
             if current_day not in allowed_days:
                 continue
-            
+
             allowed_hours = window.get("hours", [])
             if len(allowed_hours) == 2:
                 start_str, end_str = allowed_hours
                 if start_str <= current_time_str <= end_str:
                     return True
-        
+
         return False
 
     def _safe_eval(self, expr: str, context: dict) -> Any:
@@ -182,7 +183,9 @@ class ExecutionEngine:
 
         for node in ast.walk(tree):
             if not isinstance(node, allowed_nodes):
-                raise ValueError(f"Forbidden expression node: {type(node).__name__}")
+                raise ValueError(
+                    f"Forbidden expression node: {type(node).__name__}"
+                )
 
         # Compile and evaluate in a restricted environment
         code = compile(tree, filename="<safe_eval>", mode="eval")
@@ -526,12 +529,15 @@ class ExecutionEngine:
             # Approval Workflow Check
             if not simulate and not intent.confirmed:
                 approval_rules = limits.get("approvals", [])
-                
+
                 for rule in approval_rules:
                     min_cost = rule.get("min_cost", 0)
                     required_role = rule.get("required_role", "admin")
-                    
-                    if action_cost >= min_cost and required_role not in user_roles:
+
+                    if (
+                        action_cost >= min_cost
+                        and required_role not in user_roles
+                    ):
                         # This action triggers an approval requirement
                         result = ExecutionResult(
                             request_id=intent.request_id,
@@ -824,7 +830,7 @@ class ExecutionEngine:
             execution_time_ms=execution_time_ms,
             cost=cost,
         )
-        
+
         logger.warning(
             f"Execution rejected: {message}",
             extra={

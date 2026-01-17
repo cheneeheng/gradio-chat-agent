@@ -9,10 +9,7 @@ This example demonstrates:
 
 import os
 
-from gradio_chat_agent.execution.engine import ExecutionEngine
-from gradio_chat_agent.models.enums import ProjectOp
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
-from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 
 
 def run_example():
@@ -23,20 +20,18 @@ def run_example():
     )
     print(f"Connecting to database: {db_url}")
     repository = SQLStateRepository(db_url)
-    registry = InMemoryRegistry()
-    engine = ExecutionEngine(registry, repository)
+    # registry = InMemoryRegistry()
+    # engine = ExecutionEngine(registry, repository)
 
     project_id = "ui-demo-project"
 
     # 2. Ensure Project Exists
-    # Using the repository directly or via Engine/API.
-    # The repository's create_project is simplest for setup scripts.
-    if project_id not in repository._ensure_project(project_id) or True:
-        # _ensure_project returns void/None in SQL repo usually,
-        # but let's use the public API pattern if possible,
-        # or just rely on the repository methods directly for setup.
+    existing_projects = [p["id"] for p in repository.list_projects()]
+    if project_id not in existing_projects:
         repository.create_project(project_id, "UI Features Demo")
-        print(f"Created/Ensured project: {project_id}")
+        print(f"Created project: {project_id}")
+    else:
+        print(f"Project already exists: {project_id}")
 
     # 3. Setup Team Members
     print("\n--- Setting up Team Members ---")
@@ -69,7 +64,9 @@ def run_example():
     print("To view these features:")
     print("1. Run the app: uv run python src/gradio_chat_agent/app.py")
     print(f"2. In the 'Control Panel', ensure Project is '{project_id}'")
-    print("   (You may need to add '{project_id}' to the dropdown in layout.py or manually type it if the UI allows)")
+    print(
+        "   (You may need to add '{project_id}' to the dropdown in layout.py or manually type it if the UI allows)"
+    )
     print("3. Check the 'Memory' tab to see the facts.")
     print("4. Check the 'Team' tab to see the members.")
 

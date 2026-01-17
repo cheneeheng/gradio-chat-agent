@@ -6,8 +6,8 @@ This example demonstrates how:
 3. Developer actions are hidden from standard users (viewers/operators).
 """
 
-from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.api.endpoints import ApiEndpoints
+from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.action import (
     ActionDeclaration,
     ActionPermission,
@@ -19,12 +19,13 @@ from gradio_chat_agent.models.enums import (
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 
+
 def run_example():
     registry = InMemoryRegistry()
     repository = InMemoryStateRepository()
     engine = ExecutionEngine(registry, repository)
     api = ApiEndpoints(engine)
-    
+
     project_id = "visibility-demo"
     repository.create_project(project_id, "Visibility Demo")
 
@@ -39,7 +40,7 @@ def run_example():
             confirmation_required=False,
             risk=ActionRisk.LOW,
             visibility=ActionVisibility.USER,
-        )
+        ),
     )
     registry.register_action(user_action, lambda i, s: ({}, [], "Hello"))
 
@@ -54,9 +55,11 @@ def run_example():
             confirmation_required=False,
             risk=ActionRisk.HIGH,
             visibility=ActionVisibility.DEVELOPER,
-        )
+        ),
     )
-    registry.register_action(dev_action, lambda i, s: ({}, [], "Debug complete"))
+    registry.register_action(
+        dev_action, lambda i, s: ({}, [], "Debug complete")
+    )
 
     # 3. Setup Project Members
     repository.add_project_member(project_id, "alice_admin", "admin")
@@ -80,6 +83,7 @@ def run_example():
     anon_actions = [a["action_id"] for a in reg_anon["actions"]]
     print(f"Visible Actions for Anonymous: {anon_actions}")
     assert "demo.debug.reset" not in anon_actions
+
 
 if __name__ == "__main__":
     run_example()

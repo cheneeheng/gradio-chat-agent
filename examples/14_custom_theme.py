@@ -6,6 +6,7 @@ This example demonstrates how to:
 """
 
 import gradio as gr
+
 from gradio_chat_agent.ui.theme import AgentTheme
 
 
@@ -14,13 +15,15 @@ def run_example():
     theme = AgentTheme()
 
     # 2. Use it in a Blocks interface
-    with gr.Blocks(theme=theme, title="Theme Demo") as demo:
+    with gr.Blocks(theme=theme, title="Theme Demo") as demo:  # noqa: F841
         gr.Markdown("# AgentTheme Demo")
         gr.Markdown("This interface uses the custom brand colors and fonts.")
 
         with gr.Row():
             with gr.Column():
-                gr.Textbox(label="Input Field", placeholder="Enter some text...")
+                gr.Textbox(
+                    label="Input Field", placeholder="Enter some text..."
+                )
                 gr.Button("Primary Action", variant="primary")
                 gr.Button("Secondary Action", variant="secondary")
 

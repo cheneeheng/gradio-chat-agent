@@ -8,6 +8,7 @@ This example demonstrates how to:
 
 import uuid
 from datetime import datetime, timezone
+
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.action import (
     ActionDeclaration,
@@ -21,6 +22,7 @@ from gradio_chat_agent.models.enums import (
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
+
 
 def run_example():
     registry = InMemoryRegistry()
@@ -40,7 +42,7 @@ def run_example():
             confirmation_required=False,
             risk=ActionRisk.LOW,
             visibility=ActionVisibility.USER,
-        )
+        ),
     )
     registry.register_action(action, lambda i, s: ({}, [], "Done"))
 
@@ -52,15 +54,11 @@ def run_example():
             "allowed": [
                 {
                     "days": ["mon", "tue", "wed", "thu", "fri"],
-                    "hours": ["08:00", "18:00"]
+                    "hours": ["08:00", "18:00"],
                 }
             ]
         },
-        "limits": {
-            "rate": {
-                "per_hour": 100
-            }
-        }
+        "limits": {"rate": {"per_hour": 100}},
     }
     repository.set_project_limits(project_id, policy)
 
@@ -68,20 +66,28 @@ def run_example():
         type=IntentType.ACTION_CALL,
         request_id=str(uuid.uuid4()),
         action_id="demo.action",
-        inputs={}
+        inputs={},
     )
 
     # We can't easily control the system clock in this example, but we can see the logic.
     res = engine.execute_intent(project_id, intent)
-    
+
     now = datetime.now(timezone.utc)
-    is_weekday = now.strftime("%a").lower() in ["mon", "tue", "wed", "thu", "fri"]
+    is_weekday = now.strftime("%a").lower() in [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+    ]
     is_business_hours = "08:00" <= now.strftime("%H:%M") <= "18:00"
-    
+
     if is_weekday and is_business_hours:
         print(f"Result (Currently within window): {res.status}")
     else:
-        print(f"Result (Currently outside window): {res.status} (Code: {res.error.code if res.error else 'None'})")
+        print(
+            f"Result (Currently outside window): {res.status} (Code: {res.error.code if res.error else 'None'})"
+        )
 
     # 2. Setup Hourly Rate Limiting
     print("\n--- Phase 2: Hourly Rate Limiting ---")
@@ -95,16 +101,25 @@ def run_example():
             type=IntentType.ACTION_CALL,
             request_id=f"req-{i}",
             action_id="demo.action",
-            inputs={}
+            inputs={},
         )
         res = engine.execute_intent(project_id, intent)
-        
+
         # If blocked by window, skip this part of the demo
-        if res.status == "rejected" and res.error.code == "execution_window_violation":
-            print("Skipping rate limit check: Currently outside allowed execution window.")
+        if (
+            res.status == "rejected"
+            and getattr(res.error, "code", None)
+            == "execution_window_violation"
+        ):
+            print(
+                "Skipping rate limit check: Currently outside allowed execution window."
+            )
             break
-            
-        print(f"Attempt {i+1}: {res.status} {f'(Error: {res.error.code})' if res.error else ''}")
+
+        print(
+            f"Attempt {i + 1}: {res.status} {f'(Error: {res.error.code})' if res.error else ''}"
+        )
+
 
 if __name__ == "__main__":
     run_example()

@@ -10,7 +10,11 @@ import gradio as gr
 from gradio_chat_agent.api.endpoints import ApiEndpoints
 from gradio_chat_agent.chat.adapter import AgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
-from gradio_chat_agent.models.enums import ExecutionMode, IntentType, ExecutionStatus
+from gradio_chat_agent.models.enums import (
+    ExecutionMode,
+    ExecutionStatus,
+    IntentType,
+)
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.ui.theme import AgentTheme
@@ -155,12 +159,13 @@ class UIController:
             if m["user_id"] == uid:
                 user_role = m["role"]
                 break
-        
+
         # 2. Filter actions
         # 'developer' visibility actions are only shown to 'admin'
         if user_role != "admin":
             act_reg = {
-                aid: adef for aid, adef in act_reg.items()
+                aid: adef
+                for aid, adef in act_reg.items()
                 if adef["permission"]["visibility"] != "developer"
             }
 
@@ -376,7 +381,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
     controller = UIController(engine, adapter)
     theme = AgentTheme()
 
-    with gr.Blocks(title="Gradio Chat Agent", theme=theme, css=CUSTOM_CSS) as demo:
+    with gr.Blocks(
+        title="Gradio Chat Agent", theme=theme, css=CUSTOM_CSS
+    ) as demo:
         # State variables
         project_id_state = gr.State(DEFAULT_PROJECT_ID)
         user_id_state = gr.State(DEFAULT_USER_ID)
@@ -407,12 +414,16 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             with gr.Column(scale=2):
                 chatbot = gr.Chatbot(label="Agent", height=600)
                 msg_input = gr.MultimodalTextbox(
-                    placeholder="Type a command or upload image...", label="Command", lines=2
+                    placeholder="Type a command or upload image...",
+                    label="Command",
+                    lines=2,
                 )
                 submit_btn = gr.Button("Submit", variant="primary")
 
                 # Plan Preview (Hidden by default)
-                with gr.Group(visible=False, elem_classes="plan-preview") as plan_group:
+                with gr.Group(
+                    visible=False, elem_classes="plan-preview"
+                ) as plan_group:
                     gr.Markdown("### Proposed Plan")
                     plan_display = gr.Markdown("No plan pending.")
                     with gr.Row():
@@ -429,11 +440,19 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
                 with gr.Tabs():
                     with gr.Tab("Live State"):
-                        state_json = gr.JSON(label="Current State", elem_classes="json-viewer")
+                        state_json = gr.JSON(
+                            label="Current State", elem_classes="json-viewer"
+                        )
                     with gr.Tab("Diffs"):
-                        diff_json = gr.JSON(label="Last Action Diff", elem_classes="json-viewer")
+                        diff_json = gr.JSON(
+                            label="Last Action Diff",
+                            elem_classes="json-viewer",
+                        )
                     with gr.Tab("Registry"):
-                        registry_json = gr.JSON(label="Available Actions", elem_classes="json-viewer")
+                        registry_json = gr.JSON(
+                            label="Available Actions",
+                            elem_classes="json-viewer",
+                        )
                     with gr.Tab("Memory"):
                         memory_df = gr.Dataframe(
                             headers=["Key", "Value"],
@@ -445,13 +464,23 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             with gr.Row():
                                 mem_key_input = gr.Textbox(label="Key")
                                 mem_val_input = gr.Textbox(label="Value")
-                            add_fact_btn = gr.Button("Add/Update Fact", size="sm")
-                            
+                            add_fact_btn = gr.Button(
+                                "Add/Update Fact", size="sm"
+                            )
+
                             with gr.Row():
-                                del_key_input = gr.Textbox(label="Key to Delete")
-                                del_fact_btn = gr.Button("Delete Fact", size="sm", variant="stop")
-                            
-                            refresh_mem_btn = gr.Button("Refresh Memory", size="sm", variant="secondary")
+                                del_key_input = gr.Textbox(
+                                    label="Key to Delete"
+                                )
+                                del_fact_btn = gr.Button(
+                                    "Delete Fact", size="sm", variant="stop"
+                                )
+
+                            refresh_mem_btn = gr.Button(
+                                "Refresh Memory",
+                                size="sm",
+                                variant="secondary",
+                            )
 
                     with gr.Tab("Team"):
                         team_df = gr.Dataframe(
@@ -469,10 +498,16 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                                     value="viewer",
                                 )
                             with gr.Row():
-                                add_member_btn = gr.Button("Add/Update Member", size="sm")
-                                remove_member_btn = gr.Button("Remove Member", size="sm", variant="stop")
-                            
-                            refresh_team_btn = gr.Button("Refresh Team", size="sm", variant="secondary")
+                                add_member_btn = gr.Button(
+                                    "Add/Update Member", size="sm"
+                                )
+                                remove_member_btn = gr.Button(
+                                    "Remove Member", size="sm", variant="stop"
+                                )
+
+                            refresh_team_btn = gr.Button(
+                                "Refresh Team", size="sm", variant="secondary"
+                            )
 
         # --- Event Bindings ---
 
@@ -486,7 +521,13 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         # Chat
         submit_btn.click(
             controller.on_submit,
-            inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
+            inputs=[
+                msg_input,
+                chatbot,
+                project_id_state,
+                user_id_state,
+                execution_mode,
+            ],
             outputs=[
                 msg_input,
                 chatbot,
@@ -499,7 +540,13 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         )
         msg_input.submit(
             controller.on_submit,
-            inputs=[msg_input, chatbot, project_id_state, user_id_state, execution_mode],
+            inputs=[
+                msg_input,
+                chatbot,
+                project_id_state,
+                user_id_state,
+                execution_mode,
+            ],
             outputs=[
                 msg_input,
                 chatbot,
@@ -514,7 +561,12 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         # Plan Approval
         approve_plan_btn.click(
             controller.on_approve_plan,
-            inputs=[pending_plan_state, chatbot, project_id_state, user_id_state],
+            inputs=[
+                pending_plan_state,
+                chatbot,
+                project_id_state,
+                user_id_state,
+            ],
             outputs=[
                 chatbot,
                 state_json,
@@ -533,7 +585,12 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         # Memory Handlers
         add_fact_btn.click(
             controller.on_add_fact,
-            inputs=[project_id_state, user_id_state, mem_key_input, mem_val_input],
+            inputs=[
+                project_id_state,
+                user_id_state,
+                mem_key_input,
+                mem_val_input,
+            ],
             outputs=[memory_df, mem_key_input, mem_val_input],
         )
         del_fact_btn.click(
@@ -550,7 +607,12 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         # Team Handlers
         add_member_btn.click(
             controller.on_add_member,
-            inputs=[project_id_state, user_id_state, team_user_input, team_role_input],
+            inputs=[
+                project_id_state,
+                user_id_state,
+                team_user_input,
+                team_role_input,
+            ],
             outputs=[team_df, team_user_input, team_role_input],
         )
         remove_member_btn.click(

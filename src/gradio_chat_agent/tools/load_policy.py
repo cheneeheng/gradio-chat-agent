@@ -8,6 +8,7 @@ import yaml
 from gradio_chat_agent.observability.logging import get_logger, setup_logging
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 
+
 logger = get_logger(__name__)
 
 
