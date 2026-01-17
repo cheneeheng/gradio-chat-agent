@@ -314,9 +314,11 @@ class TestUIController:
         members, _ = controller.on_remove_member(pid, uid, "new")
         assert members == [[uid, "admin"]]
 
-def test_create_ui():
-    engine = MagicMock()
-    adapter = MagicMock()
-    # Simply test that it returns a Blocks object and doesn't crash
-    ui = create_ui(engine, adapter)
-    assert isinstance(ui, gr.Blocks)
+
+class TestUILayout:
+    def test_create_ui(self):
+        engine = MagicMock()
+        adapter = MagicMock()
+        # Simply test that it returns a Blocks object and doesn't crash
+        ui = create_ui(engine, adapter)
+        assert isinstance(ui, gr.Blocks)
