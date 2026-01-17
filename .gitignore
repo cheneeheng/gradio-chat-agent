@@ -1,5 +1,10 @@
-tmp*
-DECISION_LOG.md
+**/tmp*
+**/delme*
+**/DECISION_LOG.md
+
+# SQLite DB
+**/*.sqlite3
+**/*.sqlite
 
 # UV
 .uv-cache/

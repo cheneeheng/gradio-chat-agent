@@ -2,8 +2,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import gradio as gr
 from gradio_chat_agent.ui.layout import UIController, create_ui
-from gradio_chat_agent.execution.engine import ExecutionEngine
-from gradio_chat_agent.chat.adapter import AgentAdapter
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.intent import ChatIntent
@@ -216,6 +214,105 @@ class TestUIController:
         res = controller.on_reject_plan([])
         assert "Plan rejected" in res[0][-1]["content"]
         assert res[2].get('visible') is False
+
+    def test_on_submit_string_input(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        intent = ChatIntent(type=IntentType.CLARIFICATION_REQUEST, request_id="1", question="?")
+        adapter.message_to_intent_or_plan.return_value = intent
+        engine.repository.get_latest_snapshot.return_value = None
+        engine.repository.get_session_facts.return_value = {}
+        
+        # Test string input instead of dict
+        res = controller.on_submit("hello", [], pid, uid, "assisted")
+        assert res[1][0]["content"] == "hello"
+
+    def test_on_submit_developer_filtering(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        # u1 is not an admin
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "viewer"}]
+        
+        from gradio_chat_agent.models.action import ActionDeclaration, ActionPermission
+        from gradio_chat_agent.models.enums import ActionVisibility, ActionRisk
+        dev_action = ActionDeclaration(
+            action_id="dev.act", title="D", description="D", targets=["t"], 
+            input_schema={}, 
+            permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.DEVELOPER)
+        )
+        engine.registry.list_actions.return_value = [dev_action]
+        engine.registry.list_components.return_value = []
+        engine.repository.get_latest_snapshot.return_value = None
+        engine.repository.get_session_facts.return_value = {}
+        
+        adapter.message_to_intent_or_plan.return_value = None
+        
+        controller.on_submit("hi", [], pid, uid, "assisted")
+        
+        # Verify adapter was called with filtered registry (empty because dev.act was filtered out)
+        args, kwargs = adapter.message_to_intent_or_plan.call_args
+        assert "dev.act" not in kwargs["action_registry"]
+
+    def test_on_submit_role_lookup(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        # User is an operator
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "operator"}]
+        engine.repository.get_latest_snapshot.return_value = None
+        engine.repository.get_session_facts.return_value = {}
+        
+        adapter.message_to_intent_or_plan.return_value = None
+        controller.on_submit("hi", [], pid, uid, "assisted")
+        
+        # We can't easily verify the internal user_role variable without mocking execute_intent 
+        # or similar, but this executes the lookup code (lines 155-157).
+
+    def test_on_approve_plan_role_lookup(self, setup):
+        controller, engine, _, pid, uid = setup
+        step = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="a1", inputs={})
+        plan = ExecutionPlan(plan_id="p1", steps=[step])
+        # User is an admin
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "admin"}]
+        engine.execute_plan.return_value = []
+        
+        controller.on_approve_plan(plan, [], pid, uid)
+        # Verifies role lookup in on_approve_plan (lines 329-331)
+
+    def test_ui_controller_on_submit_pending_approval(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="act", inputs={})
+        adapter.message_to_intent_or_plan.return_value = intent
+        
+        exec_res = ExecutionResult(
+            request_id="1", action_id="act", status=ExecutionStatus.PENDING_APPROVAL, 
+            message="Need admin", state_snapshot_id="none"
+        )
+        engine.execute_intent.return_value = exec_res
+        engine.repository.get_latest_snapshot.return_value = None
+        engine.repository.get_session_facts.return_value = {}
+        res = controller.on_submit("msg", [], pid, uid, "assisted")
+        assert "pending approval" in res[1][-1]["content"]
+
+    def test_ui_controller_coverage(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "admin"}]
+        res = controller.refresh_ui(pid, uid)
+        assert res[4] == [[uid, "admin"]]
+        
+        engine.repository.get_session_facts.return_value = {"k": "v"}
+        facts, _, _ = controller.on_add_fact(pid, uid, "k", "v")
+        assert facts == [["k", "v"]]
+        
+        engine.repository.get_session_facts.return_value = {}
+        facts, _ = controller.on_delete_fact(pid, uid, "k")
+        assert facts == []
+        
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "admin"}, {"user_id": "new", "role": "viewer"}]
+        members, _, _ = controller.on_add_member(pid, uid, "new", "viewer")
+        assert members == [[uid, "admin"], ["new", "viewer"]]
+        
+        engine.repository.get_project_members.return_value = [{"user_id": uid, "role": "admin"}]
+        members, _ = controller.on_remove_member(pid, uid, "new")
+        assert members == [[uid, "admin"]]
 
 def test_create_ui():
     engine = MagicMock()

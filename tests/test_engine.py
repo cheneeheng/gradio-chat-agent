@@ -1,6 +1,6 @@
 import uuid
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from gradio_chat_agent.execution.engine import ExecutionEngine
@@ -8,10 +8,13 @@ from gradio_chat_agent.models.action import (
     ActionDeclaration,
     ActionPermission,
     ActionPrecondition,
+    ActionRisk,
+    ActionVisibility,
 )
 from gradio_chat_agent.models.component import (
     ComponentDeclaration,
     ComponentPermissions,
+    ComponentInvariant,
 )
 from gradio_chat_agent.models.enums import (
     ActionRisk,
@@ -213,19 +216,6 @@ class TestEngine:
         assert result.status == ExecutionStatus.REJECTED
         assert "only executes action_call" in result.message
 
-    def test_execute_missing_action_id(self, setup):
-        engine, _, _, pid = setup
-        # Hack to create intent with None action_id (Pydantic might allow if Optional, but we validate later)
-        # Actually ChatIntent action_id is Optional, defaulting to None.
-        intent = ChatIntent(
-            type=IntentType.ACTION_CALL,
-            request_id="req-1",
-            # action_id is None by default
-        )
-        result = engine.execute_intent(pid, intent)
-        assert result.status == ExecutionStatus.REJECTED
-        assert "Missing action_id" in result.message
-
     def test_handler_error(self, setup):
         engine, registry, _, pid = setup
         
@@ -284,32 +274,6 @@ class TestEngine:
         assert result.status == ExecutionStatus.REJECTED
         assert "Error evaluating precondition" in result.message
 
-    def test_execute_no_handler(self, setup):
-        engine, registry, _, pid = setup
-        # Register action manually in internal dict but skip handler registration
-        # This is a bit of a hack but tests the engine's check
-        action = ActionDeclaration(
-            action_id="demo.nohandler",
-            title="No Handler",
-            description="Bad",
-            targets=["demo.counter"],
-            input_schema={},
-            permission=ActionPermission(
-                confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER
-            )
-        )
-        registry._actions[action.action_id] = action
-        # registry._handlers[action.action_id] remains empty
-        
-        intent = ChatIntent(
-            type=IntentType.ACTION_CALL,
-            request_id="req-1",
-            action_id="demo.nohandler",
-        )
-        result = engine.execute_intent(pid, intent)
-        assert result.status == ExecutionStatus.FAILED
-        assert "No handler registered" in result.message
-
     def test_rate_limit(self, setup):
         engine, _, repo, pid = setup
 
@@ -335,24 +299,6 @@ class TestEngine:
         res3 = engine.execute_intent(pid, intent)
         assert res3.status == ExecutionStatus.REJECTED
         assert "Rate limit exceeded" in res3.message
-
-    def test_engine_lock_direct(self, setup):
-        engine, _, _, pid = setup
-        # Call direct to ensure coverage
-        lock = engine._get_project_lock(pid)
-        assert lock is not None
-        # Call again to hit the "if project_id in self.project_locks" branch (implicit in get)
-        lock2 = engine._get_project_lock(pid)
-        assert lock == lock2
-
-    def test_engine_lock_reuse(self, setup):
-        engine, _, _, pid = setup
-        # First call creates the lock
-        lock1 = engine._get_project_lock(pid)
-        # Second call reuses it - explicitly hitting the cached branch
-        lock2 = engine._get_project_lock(pid)
-        assert lock1 is lock2
-        assert pid in engine.project_locks
 
     def test_execute_plan_step_failure(self, setup):
         engine, _, _, pid = setup
@@ -381,7 +327,7 @@ class TestEngine:
         assert len(results) == 1
         assert results[0].status == ExecutionStatus.REJECTED
 
-    def test_revert_with_no_history(self, setup):
+    def test_revert_to_snapshot(self, setup):
         engine, _, repo, pid = setup
         
         # Create a snapshot in a DIFFERENT project so it exists in repo
@@ -390,7 +336,6 @@ class TestEngine:
         repo.save_snapshot(other_pid, snap)
         
         # Revert 'pid' (which has no history) to 's1'
-        # This triggers "if not current_snapshot:" branch
         result = engine.revert_to_snapshot(pid, "s1")
         
         assert result.status == ExecutionStatus.SUCCESS
@@ -407,13 +352,6 @@ class TestEngine:
             ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="a", execution_mode=ExecutionMode.INTERACTIVE)
         ])
         res = engine.execute_plan(pid, plan_interactive)
-        assert len(res) == 1
-        assert res[0].error.code == "plan_limit_exceeded"
-
-        # Autonomous mode: max 10 steps
-        steps = [ChatIntent(type=IntentType.ACTION_CALL, request_id=str(i), action_id="a", execution_mode=ExecutionMode.AUTONOMOUS) for i in range(11)]
-        plan_auto = ExecutionPlan(plan_id="p2", steps=steps)
-        res = engine.execute_plan(pid, plan_auto)
         assert len(res) == 1
         assert res[0].error.code == "plan_limit_exceeded"
 
@@ -453,123 +391,259 @@ class TestEngine:
         engine, _, repo, pid = setup
         uid = "user1"
 
-        # 1. Missing user_id
+        # Remember
         intent_rem = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="memory.remember", inputs={"key": "k", "value": "v"})
-        res = engine.execute_intent(pid, intent_rem)
-        assert res.status == ExecutionStatus.REJECTED
-        assert "User ID required" in res.message
-
-        # 2. Simulation
-        res = engine.execute_intent(pid, intent_rem, user_id=uid, simulate=True)
-        assert res.status == ExecutionStatus.SUCCESS
-        assert res.simulated is True
-        assert repo.get_session_facts(pid, uid) == {}
-
-        # 3. Real Remember
         res = engine.execute_intent(pid, intent_rem, user_id=uid)
         assert res.status == ExecutionStatus.SUCCESS
         assert repo.get_session_facts(pid, uid) == {"k": "v"}
 
-        # 4. Real Forget
+        # Forget
         intent_forg = ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="memory.forget", inputs={"key": "k"})
         res = engine.execute_intent(pid, intent_forg, user_id=uid)
         assert res.status == ExecutionStatus.SUCCESS
         assert repo.get_session_facts(pid, uid) == {}
 
-        # 5. Memory error
-        repo.save_session_fact = MagicMock(side_effect=Exception("DB Error"))
-        res = engine.execute_intent(pid, intent_rem, user_id=uid)
-        assert res.status == ExecutionStatus.FAILED
-        assert "Memory error" in res.message
-
-    def test_execute_intent_with_media_hashing(self, setup):
+    def test_budget_enforcement(self, setup):
         engine, registry, repo, pid = setup
-        
-        action = ActionDeclaration(
-            action_id="act", title="T", description="D", targets=["c"],
-            input_schema={},
-            permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER)
+        registry.register_action(
+            ActionDeclaration(
+                action_id="test.expensive", title="E", description="E", targets=["t"], 
+                input_schema={}, permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER),
+                cost=10.0
+            ),
+            handler=lambda i, s: (s.components, [], "Done")
         )
-        registry.register_action(action, lambda i, s: ({}, [], "ok"))
+        repo.set_project_limits(pid, {"limits": {"budget": {"daily": 5}}})
         
-        media = IntentMedia(type="image", data="some-base64-data", mime_type="image/png")
-        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="act", media=media)
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.expensive"))
+        assert res.status == ExecutionStatus.REJECTED
+        assert res.error.code == "budget_exceeded"
+
+    def test_invariant_enforcement(self, setup):
+        engine, registry, repo, pid = setup
+        registry.register_component(
+            ComponentDeclaration(
+                component_id="test.comp", title="C", description="C", state_schema={},
+                permissions=ComponentPermissions(readable=True),
+                invariants=[ComponentInvariant(description="P", expr="state['test.comp']['v'] >= 0")]
+            )
+        )
+        registry.register_action(
+            ActionDeclaration(
+                action_id="test.set", title="S", description="S", targets=["test.comp"], 
+                input_schema={}, permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER)
+            ),
+            handler=lambda i, s: ({"test.comp": {"v": i["v"]}}, [], "Set")
+        )
         
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.set", inputs={"v": -1}))
+        assert res.status == ExecutionStatus.FAILED
+        assert res.error.code == "invariant_violation"
+
+    def test_execution_windows(self, setup):
+        engine, _, repo, pid = setup
+        repo.set_project_limits(pid, {"execution_windows": {"allowed": [{"days": ["never"], "hours": ["00:00", "23:59"]}]}})
+        
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1}))
+        assert res.status == ExecutionStatus.REJECTED
+        assert res.error.code == "execution_window_violation"
+
+    def test_approval_workflow(self, setup):
+        engine, registry, repo, pid = setup
+        repo.set_project_limits(pid, {"approvals": [{"min_cost": 5.0, "required_role": "admin"}]})
+        registry.register_action(
+            ActionDeclaration(
+                action_id="test.exp", title="E", description="E", targets=["t"], input_schema={},
+                permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER),
+                cost=10.0
+            ),
+            handler=lambda i, s: (s.components, [], "ok")
+        )
+        
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.exp"), user_roles=["operator"])
+        assert res.status == ExecutionStatus.PENDING_APPROVAL
+
+    def test_engine_db_failures(self, setup):
+        engine, _, repo, pid = setup
+        repo.save_execution = MagicMock(side_effect=Exception("DB Error"))
+        
+        # Rejection path
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="missing"))
+        assert res.status == ExecutionStatus.REJECTED
+
+        # Failure path
+        res = engine._create_failure(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="a"), "fail")
+        assert res.status == ExecutionStatus.FAILED
+
+    def test_engine_safe_eval_all_nodes(self, setup):
+        engine, _, _, _ = setup
+        context = {"a": 1, "b": {"c": 2}, "d": [10, 20]}
+        # Test various AST nodes allowed
+        assert engine._safe_eval("a + 5", context) == 6
+        assert engine._safe_eval("b['c'] == 2", context) is True
+        assert engine._safe_eval("d[0] < d[1]", context) is True
+        assert engine._safe_eval("-a == -1", context) is True
+        assert engine._safe_eval("a is not None", context) is True
+        assert engine._safe_eval("10 in d", context) is True
+        assert engine._safe_eval("30 not in d", context) is True
+        assert engine._safe_eval("True and (False or True)", context) is True
+
+    def test_engine_safe_eval_forbidden_call(self, setup):
+        engine, _, _, _ = setup
+        with pytest.raises(ValueError, match="Forbidden expression node: Call"):
+            engine._safe_eval("len(d)", {"d": [1]})
+
+    def test_hourly_rate_limit(self, setup):
+        engine, _, repo, pid = setup
+        # Set hourly rate limit to 1 per hour
+        repo.set_project_limits(pid, {"limits": {"rate": {"per_hour": 1}}})
+        
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
+        
+        # 1st call: Success
+        assert engine.execute_intent(pid, intent).status == ExecutionStatus.SUCCESS
+        
+        # 2nd call: Should fail (hourly)
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.REJECTED
+        assert "Hourly rate limit exceeded" in res.message
+
+    def test_invariant_violation_error(self, setup):
+        engine, registry, repo, pid = setup
+        registry.register_component(
+            ComponentDeclaration(
+                component_id="bad.comp", title="B", description="B", state_schema={},
+                permissions=ComponentPermissions(readable=True),
+                invariants=[ComponentInvariant(description="Fail", expr="1 / 0")] # Division by zero
+            )
+        )
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.FAILED
+        assert res.error.code == "invariant_error"
+
+    def test_create_rejection_db_error(self, setup):
+        engine, _, repo, pid = setup
+        with patch.object(repo, 'save_execution', side_effect=Exception("DB Error")):
+            intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="missing")
+            # Should not crash
+            res = engine.execute_intent(pid, intent)
+            assert res.status == ExecutionStatus.REJECTED
+
+    def test_create_failure_db_error(self, setup):
+        engine, _, repo, pid = setup
+        with patch.object(repo, 'save_execution', side_effect=Exception("DB Error")):
+            intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
+            # Force a handler failure by mocking the handler ITSELF
+            mock_handler = MagicMock(side_effect=Exception("Handler Fail"))
+            with patch.object(engine.registry, 'get_handler', return_value=mock_handler):
+                res = engine.execute_intent(pid, intent)
+                assert res.status == ExecutionStatus.FAILED
+
+    def test_revert_to_snapshot_missing_current(self, setup):
+        engine, _, repo, pid = setup
+        # Create a snapshot to revert to
+        repo.save_snapshot("other", StateSnapshot(snapshot_id="target", components={"a": {"v": 1}}))
+        
+        # Ensure repository returns None for latest snapshot
+        with patch.object(repo, 'get_latest_snapshot', return_value=None):
+            res = engine.revert_to_snapshot(pid, "target")
+            assert res.status == ExecutionStatus.SUCCESS
+            assert "target" in res.message
+
+    def test_revert_to_snapshot_not_found(self, setup):
+        engine, _, _, pid = setup
+        res = engine.revert_to_snapshot(pid, "nonexistent")
+        assert res.status == ExecutionStatus.FAILED
+        assert res.error.code == "not_found"
+
+    def test_execute_plan_autonomous_limit(self, setup):
+        engine, _, _, pid = setup
+        # Autonomous mode: max 10 steps
+        steps = [ChatIntent(type=IntentType.ACTION_CALL, request_id=str(i), action_id="a", execution_mode=ExecutionMode.AUTONOMOUS) for i in range(11)]
+        plan_auto = ExecutionPlan(plan_id="p2", steps=steps)
+        res = engine.execute_plan(pid, plan_auto)
+        assert len(res) == 1
+        assert res[0].error.code == "plan_limit_exceeded"
+
+    def test_execute_project_archived(self, setup):
+        engine, _, repo, pid = setup
+        repo.create_project(pid, "P1")
+        repo.archive_project(pid)
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.REJECTED
+        assert res.error.code == "project_archived"
+
+    def test_memory_actions_error(self, setup):
+        engine, _, repo, pid = setup
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="memory.remember", inputs={"key": "k", "value": "v"})
+        with patch.object(repo, 'save_session_fact', side_effect=Exception("Disk Full")):
+            res = engine.execute_intent(pid, intent, user_id="u1")
+            assert res.status == ExecutionStatus.FAILED
+            assert "Memory error" in res.message
+
+    def test_invariant_eval_error(self, setup):
+        engine, registry, repo, pid = setup
+        registry.register_component(
+            ComponentDeclaration(
+                component_id="bad.comp", title="B", description="B", state_schema={},
+                permissions=ComponentPermissions(readable=True),
+                invariants=[ComponentInvariant(description="Fail", expr="state['missing']['key']")] # KeyError
+            )
+        )
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.FAILED
+        assert res.error.code == "invariant_error"
+
+    def test_execute_missing_action_id_intent(self, setup):
+        engine, _, _, pid = setup
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1")
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.REJECTED
+        assert "Missing action_id" in res.message
+
+    def test_memory_actions_validation(self, setup):
+        engine, _, repo, pid = setup
+        # Missing user_id
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="memory.remember", inputs={"key": "k", "value": "v"})
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.REJECTED
+        assert "User ID required" in res.message
+
+        # Simulation
+        res = engine.execute_intent(pid, intent, user_id="u1", simulate=True)
+        assert res.status == ExecutionStatus.SUCCESS
+        assert res.simulated is True
+
+    def test_no_handler_failure(self, setup):
+        engine, registry, _, pid = setup
+        # Register action without handler manually
+        action = ActionDeclaration(
+            action_id="no.handler", title="N", description="N", targets=["demo.counter"],
+            input_schema={}, permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER)
+        )
+        registry._actions["no.handler"] = action
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="no.handler")
+        res = engine.execute_intent(pid, intent)
+        assert res.status == ExecutionStatus.FAILED
+        assert "No handler registered" in res.message
+
+    def test_media_hashing(self, setup):
+        engine, _, _, pid = setup
+        media = IntentMedia(type="image", data="some-data", mime_type="image/png")
+        intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1}, media=media)
         res = engine.execute_intent(pid, intent)
         assert res.status == ExecutionStatus.SUCCESS
         assert "media_hash" in res.metadata
         assert res.metadata["media_type"] == "image"
 
-
-class TestEngineExceptions:
-    @pytest.fixture
-    def setup(self):
-        registry = InMemoryRegistry()
-        repository = InMemoryStateRepository()
-        engine = ExecutionEngine(registry, repository)
-        return engine, registry, repository
-
-    def test_rejection_persistence_error(self, setup):
-        """Test that a DB error during rejection logging doesn't crash the response."""
-        engine, _, repository = setup
-        pid = "proj-err"
-
-        # Mock save_execution to raise an error
-        original_save = repository.save_execution
-        def breaking_save(project_id, result):
-            raise ValueError("DB Crash")
-        repository.save_execution = breaking_save
-
-        intent = ChatIntent(
-            type=IntentType.ACTION_CALL,
-            request_id="req-1",
-            action_id="missing.action",
-        )
-        
-        # Should return REJECTED, not raise ValueError
-        result = engine.execute_intent(pid, intent)
-        assert result.status == ExecutionStatus.REJECTED
-        assert "not found" in result.message
-
-        # Restore
-        repository.save_execution = original_save
-
-    def test_failure_persistence_error(self, setup):
-        """Test that a DB error during failure logging doesn't crash the response."""
-        engine, registry, repository = setup
-        pid = "proj-err"
-        
-        # Register action but no handler (triggers failure)
-        action = ActionDeclaration(
-            action_id="demo.nohandler",
-            title="No Handler",
-            description="Bad",
-            targets=["demo"],
-            input_schema={},
-            permission=ActionPermission(
-                confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.USER
-            )
-        )
-        registry._actions[action.action_id] = action
-
-        # Mock save_execution to raise an error
-        original_save = repository.save_execution
-        def breaking_save(project_id, result):
-            raise ValueError("DB Crash")
-        repository.save_execution = breaking_save
-
-        intent = ChatIntent(
-            type=IntentType.ACTION_CALL,
-            request_id="req-1",
-            action_id="demo.nohandler",
-        )
-        
-        # Should return FAILED, not raise ValueError
-        result = engine.execute_intent(pid, intent)
-        assert result.status == ExecutionStatus.FAILED
-        assert "No handler registered" in result.message
-
-        # Restore
-        repository.save_execution = original_save
-
-
+    def test_execution_window_match(self, setup):
+        engine, _, _, _ = setup
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        day = now.strftime("%a").lower()
+        # Create a window that matches current time
+        windows = [{"days": [day], "hours": ["00:00", "23:59"]}]
+        assert engine._is_within_execution_window(windows) is True

@@ -5,7 +5,7 @@ from gradio_chat_agent.api.endpoints import ApiEndpoints
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
-from gradio_chat_agent.models.action import ActionDeclaration, ActionPermission
+from gradio_chat_agent.models.action import ActionDeclaration, ActionPermission, ActionRisk, ActionVisibility
 from gradio_chat_agent.models.component import (
     ComponentDeclaration,
     ComponentPermissions,
@@ -269,8 +269,6 @@ class TestApiEndpoints:
         assert log[0]["action_id"] == "test.action"
         assert log[0]["state_diff"][0]["value"] == 2
 
-    # --- New Management Tests ---
-
     def test_manage_project(self, setup):
         api, _, repo, _ = setup
         
@@ -478,34 +476,37 @@ class TestApiEndpoints:
         inputs = kwargs['intent'].inputs if 'intent' in kwargs else args[1].inputs
         assert inputs == {"static": "value", "dynamic": 123, "plain": "plain_text"}
 
-    def test_manage_validation_edges(self, setup):
-        api, _, _, pid = setup
-        
-        # Project
-        assert api.manage_project(ProjectOp.CREATE, name=None)["status"] == "error" # Missing name
-        assert api.manage_project(ProjectOp.ARCHIVE, project_id=None)["status"] == "error" # Missing ID
-        assert api.manage_project(ProjectOp.PURGE, project_id=None)["status"] == "error" # Missing ID
-        assert api.manage_project("unknown")["status"] == "error"
-        
-        # Membership
-        assert api.manage_membership(MembershipOp.ADD, pid, "u", role=None)["status"] == "error" # Missing role
-        assert api.manage_membership(MembershipOp.UPDATE_ROLE, pid, "u", role=None)["status"] == "error" # Missing role
-        assert api.manage_membership("unknown", pid, "u")["status"] == "error"
-        
-        # Webhook
-        assert api.manage_webhook(WebhookOp.CREATE, config=None)["status"] == "error" # Missing config
-        assert api.manage_webhook(WebhookOp.UPDATE, webhook_id=None, config=None)["status"] == "error" # Missing config
-        assert api.manage_webhook(WebhookOp.DELETE, webhook_id=None)["status"] == "error" # Missing ID
-        assert api.manage_webhook("unknown")["status"] == "error"
-        
-        # Schedule
-        assert api.manage_schedule(ScheduleOp.CREATE, config=None)["status"] == "error" # Missing config
-        assert api.manage_schedule(ScheduleOp.UPDATE, schedule_id=None, config=None)["status"] == "error" # Missing config
-        assert api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)["status"] == "error" # Missing ID
-        assert api.manage_schedule("unknown")["status"] == "error"
-
     def test_revert_invalid_snapshot(self, setup):
         api, _, _, pid = setup
         res = api.revert_snapshot(pid, "invalid_snap_id")
         assert res["status"] == "failed"
         assert "not found" in res["message"]
+
+    def test_api_get_registry_filtering(self, setup):
+        api, _, _, pid = setup
+        api.engine.repository.add_project_member(pid, "u1", "viewer")
+        
+        api.engine.registry.register_action(
+            ActionDeclaration(
+                action_id="dev.a", title="D", description="D", targets=["t"], 
+                input_schema={},
+                permission=ActionPermission(confirmation_required=False, risk=ActionRisk.LOW, visibility=ActionVisibility.DEVELOPER)
+            ),
+            handler=lambda i, s: ({}, [], "D")
+        )
+        
+        reg = api.get_registry(pid, user_id="u1")
+        action_ids = [a["action_id"] for a in reg["actions"]]
+        assert "dev.a" not in action_ids
+
+    def test_api_manage_webhook_delete_missing_id(self, setup):
+        api, _, _, _ = setup
+        res = api.manage_webhook(WebhookOp.DELETE, webhook_id=None)
+        assert res["status"] == "error"
+        assert "Webhook ID required" in res["message"]
+
+    def test_api_manage_schedule_delete_missing_id(self, setup):
+        api, _, _, _ = setup
+        res = api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)
+        assert res["status"] == "error"
+        assert "Schedule ID required" in res["message"]

@@ -10,7 +10,7 @@ import gradio as gr
 from gradio_chat_agent.api.endpoints import ApiEndpoints
 from gradio_chat_agent.chat.adapter import AgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
-from gradio_chat_agent.models.enums import ExecutionMode, IntentType
+from gradio_chat_agent.models.enums import ExecutionMode, IntentType, ExecutionStatus
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.ui.theme import AgentTheme
