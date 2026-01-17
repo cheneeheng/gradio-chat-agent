@@ -14,6 +14,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
+from gradio_chat_agent.observability.logging import get_logger, setup_logging
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 from gradio_chat_agent.registry.demo_actions import (
     counter_component,
@@ -36,6 +37,8 @@ from gradio_chat_agent.registry.system_actions import (
 )
 from gradio_chat_agent.ui.layout import create_ui
 
+logger = get_logger(__name__)
+
 
 def main():
     """Initializes and launches the Gradio Chat Agent application.
@@ -49,6 +52,7 @@ def main():
 
     It then launches the server on port 7860.
     """
+    setup_logging()
     # 1. Setup Registry
     registry = InMemoryRegistry()
 
@@ -67,7 +71,7 @@ def main():
     db_url = os.environ.get(
         "DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3"
     )
-    print(f"Connecting to database: {db_url}")
+    logger.info(f"Connecting to database: {db_url}")
     repository = SQLStateRepository(db_url)
 
     # 3. Setup Engine
@@ -81,7 +85,7 @@ def main():
     demo = create_ui(engine, adapter)
 
     # 6. Launch
-    print("Starting Gradio Chat Agent...")
+    logger.info("Starting Gradio Chat Agent...")
     demo.launch(server_name="0.0.0.0", server_port=7860)
 
 

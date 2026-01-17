@@ -72,22 +72,22 @@
 
 ## 7. Developer Experience (CLI & API)
 
-- [ ] **Standardized API Responses:** Refactor `ApiEndpoints` to use a consistent response envelope (`{"code": 0, "message": "success", "data": {...}}`) as seen in the `APIResponse` snippets.
-- [ ] **API Simulation Endpoints:** Implement `api_simulate_intent` and `api_simulate_plan` in `endpoints.py`, wrapping the planned simulation logic in the `ExecutionEngine`.
-- [ ] **CLI Tool:** Create a `typer` or `click` based CLI (`gradio-agent`) that exposes the management API.
+- [x] **Standardized API Responses:** Refactor `ApiEndpoints` to use a consistent response envelope (`{"code": 0, "message": "success", "data": {...}}`) as seen in the `APIResponse` snippets.
+- [x] **API Simulation Endpoints:** Implement `api_simulate_intent` and `api_simulate_plan` in `endpoints.py`, wrapping the planned simulation logic in the `ExecutionEngine`.
+- [x] **CLI Tool:** Create a `typer` or `click` based CLI (`gradio-agent`) that exposes the management API.
   - `gradio-agent project create`
   - `gradio-agent user create` (with password hashing)
   - `gradio-agent user password-reset`
   - `gradio-agent webhook list`
-- [ ] **Policy Validation:** Add a CLI command to validate policy YAML files against the schema before loading.
+- [x] **Policy Validation:** Add a CLI command to validate policy YAML files against the schema before loading.
 
 ## 8. Observability & Analytics
 
-- [ ] **Structured Operational Logging:** Replace `print()` statements with a centralized Python `logging` setup that emits JSON-structured lines (JSONL) to `stdout` for production ingestion (Splunk/Datadog/Elastic).
-- [ ] **Environment-Driven Log Verbosity:** Integrate the `LOG_LEVEL` environment variable into the logging initialization to allow dynamic control over system verbosity without code changes.
-- [ ] **Log Traceability:** Ensure every application log entry includes the `component`, `event`, `request_id`, and `project_id` for easy correlation between operational logs and the authoritative Audit Log.
-- [ ] **Full Intent Logging:** Update the `Execution` model and `SQLStateRepository` to store the full intent object (including action inputs and metadata) for every attempt, as required by the protocol for auditability and replay.
-- [ ] **Execution Metadata:** Add `execution_time`, `cost`, and `user_id` attribution to the `Execution` model for detailed resource accounting.
+- [x] **Structured Operational Logging:** Replace `print()` statements with a centralized Python `logging` setup that emits JSON-structured lines (JSONL) to `stdout` for production ingestion (Splunk/Datadog/Elastic).
+- [x] **Environment-Driven Log Verbosity:** Integrate the `LOG_LEVEL` environment variable into the logging initialization to allow dynamic control over system verbosity without code changes.
+- [x] **Log Traceability:** Ensure every application log entry includes the `component`, `event`, `request_id`, and `project_id` for easy correlation between operational logs and the authoritative Audit Log.
+- [x] **Full Intent Logging:** Update the `Execution` model and `SQLStateRepository` to store the full intent object (including action inputs and metadata) for every attempt, as required by the protocol for auditability and replay.
+- [x] **Execution Metadata:** Add `execution_time`, `cost`, and `user_id` attribution to the `Execution` model for detailed resource accounting.
 - [ ] **Prometheus Metrics Suite:** Implement a `/metrics` endpoint and instrument the application for the following indicators:
   - `engine_execution_total` (Counter with status/action labels)
   - `engine_execution_duration_seconds` (Histogram for latency)

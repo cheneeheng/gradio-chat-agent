@@ -373,6 +373,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
+    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -400,6 +401,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sqlalchemy", specifier = ">=2.0.45" },
+    { name = "typer", specifier = ">=0.21.0" },
 ]
 provides-extras = ["dev"]
 

@@ -71,6 +71,9 @@ class ExecutionResult(BaseModel):
     request_id: str = Field(
         ..., description="The ID of the intent that triggered this execution."
     )
+    user_id: Optional[str] = Field(
+        default=None, description="The ID of the user who triggered this execution."
+    )
     action_id: str = Field(
         ...,
         pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
@@ -83,6 +86,12 @@ class ExecutionResult(BaseModel):
         default_factory=datetime.now,
         description="When the execution completed.",
     )
+    execution_time_ms: Optional[float] = Field(
+        default=None, description="The time taken to execute the action in milliseconds."
+    )
+    cost: Optional[float] = Field(
+        default=None, description="The cost of the execution."
+    )
     message: Optional[str] = Field(
         default=None,
         description="A summary message suitable for display to the user.",
@@ -93,6 +102,10 @@ class ExecutionResult(BaseModel):
     state_diff: list[StateDiffEntry] = Field(
         default_factory=list,
         description="List of changes applied to the state.",
+    )
+    intent: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="The full intent object that triggered this execution.",
     )
     error: Optional[ExecutionError] = Field(
         default=None,

@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
     "sqlalchemy>=2.0.45",
+    "typer>=0.21.0",
 ]
 
 classifiers = [
@@ -24,6 +25,9 @@ classifiers = [
     "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: OS Independent",
 ]
+
+[project.scripts]
+gradio-agent = "gradio_chat_agent.cli:app"
 
 [project.optional-dependencies]
 dev = [

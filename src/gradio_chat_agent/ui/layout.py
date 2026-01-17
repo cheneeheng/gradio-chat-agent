@@ -587,6 +587,25 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 api_name="execute_action",
             )
 
+            # simulate_action
+            api_sim_project_id = gr.Textbox(label="project_id")
+            api_sim_action_id = gr.Textbox(label="action_id")
+            api_sim_inputs = gr.JSON(label="inputs")
+            api_sim_mode = gr.Textbox(label="mode")
+            api_sim_result = gr.JSON(label="result")
+
+            gr.Button("Simulate API").click(
+                fn=api.simulate_action,
+                inputs=[
+                    api_sim_project_id,
+                    api_sim_action_id,
+                    api_sim_inputs,
+                    api_sim_mode,
+                ],
+                outputs=[api_sim_result],
+                api_name="simulate_action",
+            )
+
             # execute_plan
             api_plan_project_id = gr.Textbox(label="project_id")
             api_plan_json = gr.JSON(label="plan")
@@ -597,6 +616,18 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 inputs=[api_plan_project_id, api_plan_json, api_mode],
                 outputs=[api_plan_result],
                 api_name="execute_plan",
+            )
+
+            # simulate_plan
+            api_sim_plan_project_id = gr.Textbox(label="project_id")
+            api_sim_plan_json = gr.JSON(label="plan")
+            api_sim_plan_result = gr.JSON(label="result")
+
+            gr.Button("Simulate Plan API").click(
+                fn=api.simulate_plan,
+                inputs=[api_sim_plan_project_id, api_sim_plan_json, api_mode],
+                outputs=[api_sim_plan_result],
+                api_name="simulate_plan",
             )
 
             # revert_snapshot

@@ -9,12 +9,14 @@ import ast
 import copy
 import hashlib
 import threading
+import time
 import uuid
 from typing import Any, Optional
 
 import jsonschema
 from pydantic import BaseModel
 
+from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.models.enums import (
     ActionRisk,
     ExecutionStatus,
@@ -30,6 +32,8 @@ from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
 from gradio_chat_agent.utils import compute_state_diff
+
+logger = get_logger(__name__)
 
 
 class EngineConfig(BaseModel):
@@ -278,18 +282,31 @@ class ExecutionEngine:
         Returns:
             An ExecutionResult object indicating success, rejection, or failure.
         """
+        start_time = time.perf_counter()
+
+        def get_duration():
+            return (time.perf_counter() - start_time) * 1000
+
         if user_roles is None:
             user_roles = ["viewer"]
 
         # 1. Validation of Intent Structure
         if intent.type != IntentType.ACTION_CALL:
             return self._create_rejection(
-                project_id, intent, "Engine only executes action_call intents."
+                project_id,
+                intent,
+                "Engine only executes action_call intents.",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
             )
 
         if not intent.action_id:
             return self._create_rejection(
-                project_id, intent, "Missing action_id."
+                project_id,
+                intent,
+                "Missing action_id.",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
             )
 
         # 1.3 Project Lifecycle Check
@@ -299,6 +316,8 @@ class ExecutionEngine:
                 intent,
                 f"Project {project_id} is archived and does not allow executions.",
                 code="project_archived",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
             )
 
         # 1.5 Execution Window Check
@@ -311,23 +330,31 @@ class ExecutionEngine:
                     intent,
                     "Outside of allowed execution window.",
                     code="execution_window_violation",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
                 )
 
         # Handle Memory Actions (System Actions that write to Facts table)
         if intent.action_id in ["memory.remember", "memory.forget"]:
             if not user_id:
                 return self._create_rejection(
-                    project_id, intent, "User ID required for memory actions."
+                    project_id,
+                    intent,
+                    "User ID required for memory actions.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
                 )
 
             if simulate:
                 return ExecutionResult(
                     request_id=intent.request_id,
+                    user_id=user_id,
                     action_id=intent.action_id,
                     status=ExecutionStatus.SUCCESS,
                     message="Simulated memory update.",
                     state_snapshot_id="simulated",
                     simulated=True,
+                    execution_time_ms=get_duration(),
                 )
 
             inputs = intent.inputs or {}
@@ -351,18 +378,24 @@ class ExecutionEngine:
                 # Log execution, but no state diff for components
                 result = ExecutionResult(
                     request_id=intent.request_id,
+                    user_id=user_id,
                     action_id=intent.action_id,
                     status=ExecutionStatus.SUCCESS,
                     message=msg,
                     state_snapshot_id="no_snapshot",  # System action
                     state_diff=[],
+                    execution_time_ms=get_duration(),
                 )
                 self.repository.save_execution(project_id, result)
                 return result
 
             except Exception as e:
                 return self._create_failure(
-                    project_id, intent, f"Memory error: {str(e)}"
+                    project_id,
+                    intent,
+                    f"Memory error: {str(e)}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
                 )
 
         # 2. Acquire Lock
@@ -387,14 +420,17 @@ class ExecutionEngine:
             action = self.registry.get_action(intent.action_id)
             if not action:
                 return self._create_rejection(
-                    project_id, intent, f"Action {intent.action_id} not found."
+                    project_id,
+                    intent,
+                    f"Action {intent.action_id} not found.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
                 )
 
+            action_cost = getattr(action, "cost", 1.0)
+
             # 5. Authorization & Governance
-            # Fetch Limits (already fetched in 1.5, reuse if possible or re-fetch for lock safety)
-            # For simplicity and freshness inside the lock, we re-fetch if needed, 
-            # but let's just use the one from above for now if it's fine.
-            # Actually, better re-fetch inside lock to be safe.
+            # Fetch Limits
             limits = self.repository.get_project_limits(project_id)
 
             # Rate Limiting: Check actions/minute
@@ -411,6 +447,9 @@ class ExecutionEngine:
                         intent,
                         f"Rate limit exceeded ({rpm_limit}/min).",
                         code="rate_limit",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
                     )
 
             # Rate Limiting: Check actions/hour
@@ -427,6 +466,9 @@ class ExecutionEngine:
                         intent,
                         f"Hourly rate limit exceeded ({rph_limit}/hour).",
                         code="rate_limit",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
                     )
 
             # Budget Check
@@ -438,13 +480,15 @@ class ExecutionEngine:
                     current_usage = self.repository.get_daily_budget_usage(
                         project_id
                     )
-                    action_cost = getattr(action, "cost", 1.0)
                     if current_usage + action_cost > daily_budget:
                         return self._create_rejection(
                             project_id,
                             intent,
                             f"Daily budget exceeded ({current_usage:.1f} + {action_cost:.1f} > {daily_budget}).",
                             code="budget_exceeded",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
                         )
 
             # Role check (Simple implementation: assume 'admin' has all access)
@@ -457,6 +501,9 @@ class ExecutionEngine:
                     project_id,
                     intent,
                     "Insufficient permissions for high-risk action.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
                 )
 
             # Confirmation check
@@ -471,12 +518,14 @@ class ExecutionEngine:
                             intent,
                             "Confirmation required.",
                             code="confirmation_required",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
                         )
 
             # Approval Workflow Check
             if not simulate and not intent.confirmed:
                 approval_rules = limits.get("approvals", [])
-                action_cost = getattr(action, "cost", 1.0)
                 
                 for rule in approval_rules:
                     min_cost = rule.get("min_cost", 0)
@@ -486,10 +535,13 @@ class ExecutionEngine:
                         # This action triggers an approval requirement
                         result = ExecutionResult(
                             request_id=intent.request_id,
+                            user_id=user_id,
                             action_id=intent.action_id,
                             status=ExecutionStatus.PENDING_APPROVAL,
                             message=f"Action requires approval from a {required_role} (Cost: {action_cost}).",
                             state_snapshot_id="none",
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
                         )
                         # We save it to history so admins can see pending requests
                         self.repository.save_execution(project_id, result)
@@ -502,7 +554,12 @@ class ExecutionEngine:
                 )
             except jsonschema.ValidationError as e:
                 return self._create_rejection(
-                    project_id, intent, f"Input validation failed: {e.message}"
+                    project_id,
+                    intent,
+                    f"Input validation failed: {e.message}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
                 )
 
             # 7. Precondition Check
@@ -515,12 +572,18 @@ class ExecutionEngine:
                             project_id,
                             intent,
                             f"Precondition failed: {precondition.description}",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
                         )
                 except Exception as e:
                     return self._create_rejection(
                         project_id,
                         intent,
                         f"Error evaluating precondition {precondition.id}: {str(e)}",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
                     )
 
             # 8. Execution
@@ -530,6 +593,9 @@ class ExecutionEngine:
                     project_id,
                     intent,
                     f"No handler registered for {intent.action_id}.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
                 )
 
             try:
@@ -549,7 +615,12 @@ class ExecutionEngine:
                 )
             except Exception as e:
                 return self._create_failure(
-                    project_id, intent, f"Handler error: {str(e)}"
+                    project_id,
+                    intent,
+                    f"Handler error: {str(e)}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
                 )
 
             # 8.5 Invariant Check
@@ -565,6 +636,9 @@ class ExecutionEngine:
                                 intent,
                                 f"Invariant violated for {component.component_id}: {invariant.description}",
                                 code="invariant_violation",
+                                user_id=user_id,
+                                execution_time_ms=get_duration(),
+                                cost=action_cost,
                             )
                     except Exception as e:
                         return self._create_failure(
@@ -572,6 +646,9 @@ class ExecutionEngine:
                             intent,
                             f"Error evaluating invariant for {component.component_id}: {str(e)}",
                             code="invariant_error",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
                         )
 
             # 9. Commit
@@ -581,7 +658,7 @@ class ExecutionEngine:
 
             # Media Hashing
             metadata = {}
-            metadata["cost"] = getattr(action, "cost", 1.0)
+            metadata["cost"] = action_cost
 
             if intent.media and intent.media.data:
                 media_hash = hashlib.sha256(
@@ -599,13 +676,34 @@ class ExecutionEngine:
 
             result = ExecutionResult(
                 request_id=intent.request_id,
+                user_id=user_id,
                 action_id=intent.action_id,
                 status=ExecutionStatus.SUCCESS,
                 message=message or "Action executed successfully.",
                 state_snapshot_id=new_snapshot_id,
                 state_diff=computed_diffs,
+                intent=intent.model_dump(mode="json"),
                 simulated=simulate,
+                execution_time_ms=get_duration(),
+                cost=action_cost,
                 metadata=metadata,
+            )
+
+            logger.info(
+                f"Execution successful: {intent.action_id}",
+                extra={
+                    "extra_fields": {
+                        "event": "execution_completed",
+                        "request_id": intent.request_id,
+                        "project_id": project_id,
+                        "user_id": user_id,
+                        "action_id": intent.action_id,
+                        "status": "success",
+                        "simulated": simulate,
+                        "duration_ms": result.execution_time_ms,
+                        "cost": result.cost,
+                    }
+                },
             )
 
             if simulate:
@@ -694,6 +792,9 @@ class ExecutionEngine:
         message: str,
         code: str = "policy_violation",
         snapshot_id: str = "unknown",
+        user_id: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+        cost: Optional[float] = None,
     ) -> ExecutionResult:
         """Helper to create AND PERSIST a REJECTED execution result.
 
@@ -704,18 +805,41 @@ class ExecutionEngine:
             code: A machine-readable error code. Defaults to 'policy_violation'.
             snapshot_id: The ID of the state snapshot at the time of rejection.
                 Defaults to 'unknown'.
+            user_id: The ID of the user.
+            execution_time_ms: Execution duration.
+            cost: Cost of attempt.
 
         Returns:
             An ExecutionResult object with REJECTED status.
         """
         result = ExecutionResult(
             request_id=intent.request_id,
+            user_id=user_id,
             action_id=intent.action_id or "unknown",
             status=ExecutionStatus.REJECTED,
             message=message,
             state_snapshot_id=snapshot_id,
+            intent=intent.model_dump(mode="json"),
             error=ExecutionError(code=code, detail=message),
+            execution_time_ms=execution_time_ms,
+            cost=cost,
         )
+        
+        logger.warning(
+            f"Execution rejected: {message}",
+            extra={
+                "extra_fields": {
+                    "event": "execution_rejected",
+                    "request_id": intent.request_id,
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "action_id": intent.action_id,
+                    "error_code": code,
+                    "duration_ms": execution_time_ms,
+                }
+            },
+        )
+
         try:
             self.repository.save_execution(project_id, result)
         except Exception:
@@ -730,6 +854,9 @@ class ExecutionEngine:
         message: str,
         code: str = "handler_error",
         snapshot_id: str = "unknown",
+        user_id: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+        cost: Optional[float] = None,
     ) -> ExecutionResult:
         """Helper to create AND PERSIST a FAILED execution result.
 
@@ -740,18 +867,41 @@ class ExecutionEngine:
             code: A machine-readable error code. Defaults to 'handler_error'.
             snapshot_id: The ID of the state snapshot at the time of failure.
                 Defaults to 'unknown'.
+            user_id: The ID of the user.
+            execution_time_ms: Execution duration.
+            cost: Cost of attempt.
 
         Returns:
             An ExecutionResult object with FAILED status.
         """
         result = ExecutionResult(
             request_id=intent.request_id,
+            user_id=user_id,
             action_id=intent.action_id or "unknown",
             status=ExecutionStatus.FAILED,
             message=message,
             state_snapshot_id=snapshot_id,
+            intent=intent.model_dump(mode="json"),
             error=ExecutionError(code=code, detail=message),
+            execution_time_ms=execution_time_ms,
+            cost=cost,
         )
+
+        logger.error(
+            f"Execution failed: {message}",
+            extra={
+                "extra_fields": {
+                    "event": "execution_failed",
+                    "request_id": intent.request_id,
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "action_id": intent.action_id,
+                    "error_code": code,
+                    "duration_ms": execution_time_ms,
+                }
+            },
+        )
+
         try:
             self.repository.save_execution(project_id, result)
         except Exception:

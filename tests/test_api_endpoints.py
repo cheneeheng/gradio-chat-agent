@@ -89,13 +89,31 @@ class TestApiEndpoints:
             mode="assisted",
         )
 
-        assert result["status"] == ExecutionStatus.SUCCESS
+        assert result["code"] == 0
         assert result["message"] == "Action executed"
+        assert result["data"]["status"] == ExecutionStatus.SUCCESS
 
         # Verify persistence
         history = repo.get_execution_history(pid)
         assert len(history) == 1
         assert history[0].status == ExecutionStatus.SUCCESS
+
+    def test_simulate_action_success(self, setup):
+        api, _, repo, pid = setup
+        repo.save_snapshot(pid, StateSnapshot(snapshot_id="0", components={"test.comp": {"val": 0}}))
+
+        result = api.simulate_action(
+            project_id=pid,
+            action_id="test.action",
+            inputs={"val": 42},
+        )
+
+        assert result["code"] == 0
+        assert result["data"]["simulated"] is True
+        
+        # Verify NO persistence
+        history = repo.get_execution_history(pid)
+        assert len(history) == 0
 
     def test_execute_action_failure_validation(self, setup):
         api, _, _, pid = setup
@@ -108,7 +126,7 @@ class TestApiEndpoints:
             mode="assisted",
         )
 
-        assert result["status"] == ExecutionStatus.REJECTED
+        assert result["code"] == 1
         assert "Input validation failed" in result["message"]
 
     def test_execute_plan_success(self, setup):
@@ -141,8 +159,10 @@ class TestApiEndpoints:
             ],
         }
 
-        results = api.execute_plan(project_id=pid, plan=plan)
+        result = api.execute_plan(project_id=pid, plan=plan)
 
+        assert result["code"] == 0
+        results = result["data"]
         assert len(results) == 2
         assert results[0]["status"] == ExecutionStatus.SUCCESS
         assert results[1]["status"] == ExecutionStatus.SUCCESS
@@ -150,6 +170,36 @@ class TestApiEndpoints:
         # Verify final state
         snapshot = repo.get_latest_snapshot(pid)
         assert snapshot.components["test.comp"]["val"] == 20
+
+    def test_simulate_plan_success(self, setup):
+        api, _, repo, pid = setup
+        repo.save_snapshot(pid, StateSnapshot(snapshot_id="0", components={"test.comp": {"val": 0}}))
+
+        plan = {
+            "plan_id": "plan-1",
+            "steps": [
+                {
+                    "type": "action_call",
+                    "request_id": str(uuid.uuid4()),
+                    "action_id": "test.action",
+                    "inputs": {"val": 10},
+                    "timestamp": "2023-01-01T00:00:00Z",
+                }
+            ],
+        }
+
+        result = api.simulate_plan(project_id=pid, plan=plan)
+        assert result["code"] == 0
+        assert result["data"][0]["simulated"] is True
+        
+        # Verify NO persistence
+        assert repo.get_latest_snapshot(pid).components["test.comp"]["val"] == 0
+
+    def test_simulate_plan_invalid(self, setup):
+        api, _, _, pid = setup
+        res = api.simulate_plan(pid, {"invalid": "data"})
+        assert res["code"] == 1
+        assert "Invalid plan" in res["message"]
 
     def test_revert_snapshot(self, setup):
         api, _, repo, pid = setup
@@ -171,7 +221,7 @@ class TestApiEndpoints:
         # Revert to snap-1
         result = api.revert_snapshot(pid, "snap-1")
 
-        assert result["status"] == ExecutionStatus.SUCCESS
+        assert result["code"] == 0
         assert "Reverted state to snapshot snap-1" in result["message"]
 
         # Verify current state matches snap-1
@@ -202,7 +252,8 @@ class TestApiEndpoints:
 
         result = api.webhook_execute(webhook_id, payload, signature=secret)
 
-        assert result["status"] == ExecutionStatus.SUCCESS
+        assert result["code"] == 0
+        assert result["data"]["status"] == ExecutionStatus.SUCCESS
 
         # Verify state
         latest = repo.get_latest_snapshot(pid)
@@ -219,7 +270,8 @@ class TestApiEndpoints:
         api.execute_action(pid, "test.action", {"val": 123}, mode="autonomous")
 
         # Verify audit log
-        log = api.get_audit_log(pid)
+        res = api.get_audit_log(pid)
+        log = res["data"]
         assert len(log) == 1
         assert log[0]["action_id"] == "test.action"
         assert log[0]["status"] == ExecutionStatus.SUCCESS
@@ -238,13 +290,15 @@ class TestApiEndpoints:
         }
 
         result = api.webhook_execute(webhook_id, {}, signature="wrong-secret")
-        assert result["status"] == ExecutionStatus.REJECTED
+        assert result["code"] == 1
         assert "Invalid signature" in result["message"]
 
     def test_get_registry(self, setup):
         api, _, _, pid = setup
 
-        reg_data = api.get_registry(pid)
+        res = api.get_registry(pid)
+        assert res["code"] == 0
+        reg_data = res["data"]
 
         assert "components" in reg_data
         assert "actions" in reg_data
@@ -263,7 +317,9 @@ class TestApiEndpoints:
         api.execute_action(pid, "test.action", {"val": 1})
         api.execute_action(pid, "test.action", {"val": 2})
 
-        log = api.get_audit_log(pid, limit=10)
+        res = api.get_audit_log(pid, limit=10)
+        assert res["code"] == 0
+        log = res["data"]
 
         assert len(log) == 2
         assert log[0]["action_id"] == "test.action"
@@ -274,19 +330,19 @@ class TestApiEndpoints:
         
         # Create
         res = api.manage_project(ProjectOp.CREATE, name="New Project")
-        assert res["status"] == "success"
-        new_pid = res["project_id"]
+        assert res["code"] == 0
+        new_pid = res["data"]["project_id"]
         assert new_pid in repo._projects
         assert repo._projects[new_pid]["name"] == "New Project"
 
         # Archive
         res = api.manage_project(ProjectOp.ARCHIVE, project_id=new_pid)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert repo._projects[new_pid]["archived_at"] is not None
 
         # Purge
         res = api.manage_project(ProjectOp.PURGE, project_id=new_pid)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert new_pid not in repo._projects
 
     def test_manage_membership(self, setup):
@@ -294,7 +350,7 @@ class TestApiEndpoints:
         
         # Add
         res = api.manage_membership(MembershipOp.ADD, pid, "alice", "viewer")
-        assert res["status"] == "success"
+        assert res["code"] == 0
         members = repo.get_project_members(pid)
         assert len(members) == 1
         assert members[0]["user_id"] == "alice"
@@ -302,13 +358,13 @@ class TestApiEndpoints:
 
         # Update
         res = api.manage_membership(MembershipOp.UPDATE_ROLE, pid, "alice", "admin")
-        assert res["status"] == "success"
+        assert res["code"] == 0
         members = repo.get_project_members(pid)
         assert members[0]["role"] == "admin"
 
         # Remove
         res = api.manage_membership(MembershipOp.REMOVE, pid, "alice")
-        assert res["status"] == "success"
+        assert res["code"] == 0
         members = repo.get_project_members(pid)
         assert len(members) == 0
 
@@ -324,20 +380,20 @@ class TestApiEndpoints:
 
         # Create
         res = api.manage_webhook(WebhookOp.CREATE, config=config)
-        assert res["status"] == "success"
-        wh_id = res["webhook_id"]
+        assert res["code"] == 0
+        wh_id = res["data"]["webhook_id"]
         assert wh_id in repo._webhooks
 
         # Update
         new_config = config.copy()
         new_config["secret"] = "new-secret"
         res = api.manage_webhook(WebhookOp.UPDATE, webhook_id=wh_id, config=new_config)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert repo._webhooks[wh_id]["secret"] == "new-secret"
 
         # Delete
         res = api.manage_webhook(WebhookOp.DELETE, webhook_id=wh_id)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert wh_id not in repo._webhooks
 
     def test_manage_schedule(self, setup):
@@ -353,20 +409,20 @@ class TestApiEndpoints:
 
         # Create
         res = api.manage_schedule(ScheduleOp.CREATE, config=config)
-        assert res["status"] == "success"
-        sch_id = res["schedule_id"]
+        assert res["code"] == 0
+        sch_id = res["data"]["schedule_id"]
         assert sch_id in repo._schedules
 
         # Update
         new_config = config.copy()
         new_config["cron"] = "0 12 * * *"
         res = api.manage_schedule(ScheduleOp.UPDATE, schedule_id=sch_id, config=new_config)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert repo._schedules[sch_id]["cron"] == "0 12 * * *"
 
         # Delete
         res = api.manage_schedule(ScheduleOp.DELETE, schedule_id=sch_id)
-        assert res["status"] == "success"
+        assert res["code"] == 0
         assert sch_id not in repo._schedules
 
     def test_update_project_policy(self, setup):
@@ -375,37 +431,37 @@ class TestApiEndpoints:
         policy = {"limits": {"rate": {"per_minute": 5}}}
 
         res = api.update_project_policy(pid, policy)
-        assert res["status"] == "success"
+        assert res["code"] == 0
 
         current_policy = repo.get_project_limits(pid)
         assert current_policy["limits"]["rate"]["per_minute"] == 5
 
     def test_manage_project_invalid(self, setup):
         api, _, _, pid = setup
-        assert api.manage_project(ProjectOp.CREATE, name=None)["status"] == "error"
-        assert api.manage_project(ProjectOp.ARCHIVE, project_id=None)["status"] == "error"
-        assert api.manage_project(ProjectOp.PURGE, project_id=None)["status"] == "error"
-        assert api.manage_project("unknown")["status"] == "error"
+        assert api.manage_project(ProjectOp.CREATE, name=None)["code"] == 1
+        assert api.manage_project(ProjectOp.ARCHIVE, project_id=None)["code"] == 1
+        assert api.manage_project(ProjectOp.PURGE, project_id=None)["code"] == 1
+        assert api.manage_project("unknown")["code"] == 1
 
     def test_manage_membership_invalid(self, setup):
         api, _, _, pid = setup
-        assert api.manage_membership(MembershipOp.ADD, pid, "u", role=None)["status"] == "error"
-        assert api.manage_membership(MembershipOp.UPDATE_ROLE, pid, "u", role=None)["status"] == "error"
-        assert api.manage_membership("unknown", pid, "u")["status"] == "error"
+        assert api.manage_membership(MembershipOp.ADD, pid, "u", role=None)["code"] == 1
+        assert api.manage_membership(MembershipOp.UPDATE_ROLE, pid, "u", role=None)["code"] == 1
+        assert api.manage_membership("unknown", pid, "u")["code"] == 1
 
     def test_manage_webhook_invalid(self, setup):
         api, _, _, pid = setup
-        assert api.manage_webhook(WebhookOp.CREATE, config=None)["status"] == "error"
-        assert api.manage_webhook(WebhookOp.UPDATE, webhook_id=None, config=None)["status"] == "error"
-        assert api.manage_webhook(WebhookOp.DELETE, webhook_id=None)["status"] == "error"
-        assert api.manage_webhook("unknown")["status"] == "error"
+        assert api.manage_webhook(WebhookOp.CREATE, config=None)["code"] == 1
+        assert api.manage_webhook(WebhookOp.UPDATE, webhook_id=None, config=None)["code"] == 1
+        assert api.manage_webhook(WebhookOp.DELETE, webhook_id=None)["code"] == 1
+        assert api.manage_webhook("unknown")["code"] == 1
 
     def test_manage_schedule_invalid(self, setup):
         api, _, _, pid = setup
-        assert api.manage_schedule(ScheduleOp.CREATE, config=None)["status"] == "error"
-        assert api.manage_schedule(ScheduleOp.UPDATE, schedule_id=None, config=None)["status"] == "error"
-        assert api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)["status"] == "error"
-        assert api.manage_schedule("unknown")["status"] == "error"
+        assert api.manage_schedule(ScheduleOp.CREATE, config=None)["code"] == 1
+        assert api.manage_schedule(ScheduleOp.UPDATE, schedule_id=None, config=None)["code"] == 1
+        assert api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)["code"] == 1
+        assert api.manage_schedule("unknown")["code"] == 1
 
     def test_api_execute_action_none_inputs(self, setup):
         api, engine, repo, pid = setup
@@ -428,21 +484,21 @@ class TestApiEndpoints:
         api, _, _, pid = setup
         # Invalid plan dict
         res = api.execute_plan(pid, {"invalid": "data"})
-        assert res[0]["status"] == "failed"
-        assert "Invalid plan" in res[0]["message"]
+        assert res["code"] == 1
+        assert "Invalid plan" in res["message"]
 
     def test_webhook_edge_cases(self, setup):
         api, _, repo, pid = setup
         
         # Non-existent
         res = api.webhook_execute("missing", {}, "sig")
-        assert res["status"] == "error"
+        assert res["code"] == 1
         assert "not found" in res["message"]
         
         # Disabled
         repo._webhooks["disabled"] = {"id": "disabled", "enabled": False}
         res = api.webhook_execute("disabled", {}, "sig")
-        assert res["status"] == "error"
+        assert res["code"] == 1
         assert "disabled" in res["message"]
         
         # No template (pass through) & Static values
@@ -479,7 +535,7 @@ class TestApiEndpoints:
     def test_revert_invalid_snapshot(self, setup):
         api, _, _, pid = setup
         res = api.revert_snapshot(pid, "invalid_snap_id")
-        assert res["status"] == "failed"
+        assert res["code"] == 1
         assert "not found" in res["message"]
 
     def test_api_get_registry_filtering(self, setup):
@@ -495,18 +551,19 @@ class TestApiEndpoints:
             handler=lambda i, s: ({}, [], "D")
         )
         
-        reg = api.get_registry(pid, user_id="u1")
+        res = api.get_registry(pid, user_id="u1")
+        reg = res["data"]
         action_ids = [a["action_id"] for a in reg["actions"]]
         assert "dev.a" not in action_ids
 
     def test_api_manage_webhook_delete_missing_id(self, setup):
         api, _, _, _ = setup
         res = api.manage_webhook(WebhookOp.DELETE, webhook_id=None)
-        assert res["status"] == "error"
+        assert res["code"] == 1
         assert "Webhook ID required" in res["message"]
 
     def test_api_manage_schedule_delete_missing_id(self, setup):
         api, _, _, _ = setup
         res = api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)
-        assert res["status"] == "error"
+        assert res["code"] == 1
         assert "Schedule ID required" in res["message"]

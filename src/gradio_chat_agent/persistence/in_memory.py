@@ -34,6 +34,51 @@ class InMemoryStateRepository(StateRepository):
         self._schedules: dict[str, dict[str, Any]] = {}
         self._projects: dict[str, dict[str, Any]] = {}
         self._memberships: dict[str, dict[str, Any]] = {}
+        self._users: dict[str, dict[str, Any]] = {}
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Lists all projects.
+
+        Returns:
+            A list of project dictionaries.
+        """
+        return list(self._projects.values())
+
+    def create_user(self, user_id: str, password_hash: str):
+        """Creates a new user.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The hashed password.
+        """
+        self._users[user_id] = {
+            "id": user_id,
+            "password_hash": password_hash,
+            "created_at": datetime.now(),
+        }
+
+    def update_user_password(self, user_id: str, password_hash: str):
+        """Updates a user's password.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The new hashed password.
+        """
+        if user_id in self._users:
+            self._users[user_id]["password_hash"] = password_hash
+
+    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Lists all webhooks.
+
+        Args:
+            project_id: Optional project ID to filter by.
+
+        Returns:
+            A list of webhook dictionaries.
+        """
+        if project_id:
+            return [v for v in self._webhooks.values() if v.get("project_id") == project_id]
+        return list(self._webhooks.values())
 
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
@@ -82,7 +127,7 @@ class InMemoryStateRepository(StateRepository):
 
         Args:
             project_id: The ID of the project the execution belongs to.
-            result: The execution result object to persist.
+            result: The execution result object to persist (including intent).
         """
         if project_id not in self._executions:
             self._executions[project_id] = []

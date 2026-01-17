@@ -299,6 +299,47 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Lists all projects.
+
+        Returns:
+            A list of project dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def create_user(self, user_id: str, password_hash: str):
+        """Creates a new user.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The hashed password.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def update_user_password(self, user_id: str, password_hash: str):
+        """Updates a user's password.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The new hashed password.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Lists all webhooks.
+
+        Args:
+            project_id: Optional project ID to filter by.
+
+        Returns:
+            A list of webhook dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_project_members(self, project_id: str) -> list[dict[str, str]]:
         """Retrieves all members of a project.
 

@@ -10,6 +10,7 @@ from typing import Any, Optional
 from sqlalchemy import (
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -68,6 +69,24 @@ class Project(Base):
     )
     schedules: Mapped[list["Schedule"]] = relationship(
         back_populates="project"
+    )
+
+
+class User(Base):
+    """Represents a user in the system.
+
+    Attributes:
+        id: Unique identifier for the user (username).
+        password_hash: Hashed password for authentication.
+        created_at: Timestamp when the user was created.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
     )
 
 
@@ -218,14 +237,18 @@ class Execution(Base):
     )
     request_id: Mapped[str] = mapped_column(String, unique=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     action_id: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String)  # success, rejected, failed
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     state_snapshot_id: Mapped[str] = mapped_column(ForeignKey("snapshots.id"))
     state_diff: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    intent: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     error: Mapped[Optional[dict[str, Any]]] = mapped_column(
         JSON, nullable=True
     )

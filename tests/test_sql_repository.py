@@ -218,3 +218,40 @@ class TestSQLRepository:
         with repo.SessionLocal() as session:
             from gradio_chat_agent.persistence.models import Project
             assert session.get(Project, pid) is None
+
+    def test_sql_repository_list_projects(self, repo):
+        repo.create_project("p1", "Project 1")
+        repo.create_project("p2", "Project 2")
+        repo.archive_project("p2")
+        
+        projects = repo.list_projects()
+        assert len(projects) >= 2
+        p_ids = [p["id"] for p in projects]
+        assert "p1" in p_ids
+        assert "p2" in p_ids
+        
+        p2_data = [p for p in projects if p["id"] == "p2"][0]
+        assert p2_data["archived"] is True
+
+    def test_sql_repository_user_management(self, repo):
+        repo.create_user("alice", "hash1")
+        with repo.SessionLocal() as session:
+            from gradio_chat_agent.persistence.models import User
+            user = session.get(User, "alice")
+            assert user.password_hash == "hash1"
+            
+        repo.update_user_password("alice", "hash2")
+        with repo.SessionLocal() as session:
+            user = session.get(User, "alice")
+            assert user.password_hash == "hash2"
+
+    def test_sql_repository_list_webhooks(self, repo):
+        repo.save_webhook({"id": "wh1", "project_id": "p1", "action_id": "a", "secret": "s"})
+        repo.save_webhook({"id": "wh2", "project_id": "p2", "action_id": "a", "secret": "s"})
+        
+        all_wh = repo.list_webhooks()
+        assert len(all_wh) >= 2
+        
+        p1_wh = repo.list_webhooks(project_id="p1")
+        assert len(p1_wh) == 1
+        assert p1_wh[0]["id"] == "wh1"

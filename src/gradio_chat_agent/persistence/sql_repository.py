@@ -22,6 +22,7 @@ from gradio_chat_agent.persistence.models import (
     Schedule,
     SessionFact,
     Snapshot,
+    User,
     Webhook,
 )
 from gradio_chat_agent.persistence.repository import StateRepository
@@ -141,12 +142,16 @@ class SQLStateRepository(StateRepository):
             db_exec = Execution(
                 request_id=result.request_id,
                 project_id=project_id,
+                user_id=result.user_id,
                 action_id=result.action_id,
                 status=result.status,
                 timestamp=result.timestamp,
+                duration_ms=result.execution_time_ms,
+                cost=result.cost,
                 message=result.message,
                 state_snapshot_id=result.state_snapshot_id,
                 state_diff=state_diff_json,
+                intent=result.intent,
                 error=error_json,
                 metadata_=result.metadata,
             )
@@ -182,12 +187,16 @@ class SQLStateRepository(StateRepository):
                 results.append(
                     ExecutionResult(
                         request_id=row.request_id,
+                        user_id=row.user_id,
                         action_id=row.action_id,
                         status=ExecutionStatus(row.status),
                         timestamp=row.timestamp,
+                        execution_time_ms=row.duration_ms,
+                        cost=row.cost,
                         message=row.message,
                         state_snapshot_id=row.state_snapshot_id,
                         state_diff=diffs,
+                        intent=row.intent,
                         error=error,
                         metadata=row.metadata_ or {},
                     )
@@ -595,3 +604,66 @@ class SQLStateRepository(StateRepository):
             )
             rows = session.execute(stmt).scalars().all()
             return [{"user_id": row.user_id, "role": row.role} for row in rows]
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Lists all projects.
+
+        Returns:
+            A list of project dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Project)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {"id": row.id, "name": row.name, "archived": row.archived_at is not None}
+                for row in rows
+            ]
+
+    def create_user(self, user_id: str, password_hash: str):
+        """Creates a new user.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The hashed password.
+        """
+        with self.SessionLocal() as session:
+            user = User(id=user_id, password_hash=password_hash)
+            session.add(user)
+            session.commit()
+
+    def update_user_password(self, user_id: str, password_hash: str):
+        """Updates a user's password.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The new hashed password.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if user:
+                user.password_hash = password_hash
+                session.commit()
+
+    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Lists all webhooks.
+
+        Args:
+            project_id: Optional project ID to filter by.
+
+        Returns:
+            A list of webhook dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Webhook)
+            if project_id:
+                stmt = stmt.where(Webhook.project_id == project_id)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "action_id": row.action_id,
+                    "enabled": row.enabled,
+                }
+                for row in rows
+            ]

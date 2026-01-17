@@ -15,6 +15,7 @@ from gradio_chat_agent.models.enums import (
     ScheduleOp,
     WebhookOp,
 )
+from gradio_chat_agent.models.api import ApiResponse
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 
@@ -73,14 +74,63 @@ class ApiEndpoints:
             user_id="api_user",
         )
 
-        return result.model_dump(mode="json")
+        return ApiResponse(
+            code=0 if result.status == "success" else 1,
+            message=result.message or result.status,
+            data=result.model_dump(mode="json"),
+        ).model_dump(mode="json")
+
+    def simulate_action(
+        self,
+        project_id: str,
+        action_id: str,
+        inputs: dict[str, Any],
+        mode: str = "assisted",
+    ) -> dict[str, Any]:
+        """Simulates a single action via the engine.
+
+        Args:
+            project_id: The target project ID.
+            action_id: The identifier of the action to execute.
+            inputs: A dictionary of arguments matching the action's input schema.
+            mode: Execution mode.
+
+        Returns:
+            The execution result wrapped in ApiResponse (simulated=True).
+        """
+        if inputs is None:
+            inputs = {}
+
+        intent = ChatIntent(
+            type=IntentType.ACTION_CALL,
+            request_id=str(uuid.uuid4()),
+            action_id=action_id,
+            inputs=inputs,
+            execution_mode=ExecutionMode(mode)
+            if mode
+            else ExecutionMode.ASSISTED,
+        )
+
+        result = self.engine.execute_intent(
+            project_id=project_id,
+            intent=intent,
+            user_roles=["admin"],
+            user_id="api_user",
+            simulate=True,
+        )
+
+        return ApiResponse(
+            code=0 if result.status == "success" else 1,
+            message=result.message or result.status,
+            data=result.model_dump(mode="json"),
+        ).model_dump(mode="json")
 
     def execute_plan(
         self,
         project_id: str,
         plan: dict[str, Any],
         mode: str = "assisted",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """Executes a multi-step plan via the engine.
 
         Args:
@@ -89,13 +139,15 @@ class ApiEndpoints:
             mode: Execution mode (interactive, assisted, autonomous).
 
         Returns:
-            List of execution results as dictionaries.
+            Execution results wrapped in ApiResponse.
         """
         try:
             # Validate/Parse plan
             plan_obj = ExecutionPlan(**plan)
         except Exception as e:
-            return [{"status": "failed", "message": f"Invalid plan: {str(e)}"}]
+            return ApiResponse(
+                code=1, message=f"Invalid plan: {str(e)}"
+            ).model_dump(mode="json")
 
         results = self.engine.execute_plan(
             project_id=project_id,
@@ -103,7 +155,53 @@ class ApiEndpoints:
             user_roles=["admin"],
             user_id="api_user",
         )
-        return [res.model_dump(mode="json") for res in results]
+        
+        all_success = all(res.status == "success" for res in results)
+        
+        return ApiResponse(
+            code=0 if all_success else 1,
+            message="Plan executed" if all_success else "Plan execution partially failed or rejected",
+            data=[res.model_dump(mode="json") for res in results],
+        ).model_dump(mode="json")
+
+    def simulate_plan(
+        self,
+        project_id: str,
+        plan: dict[str, Any],
+        mode: str = "assisted",
+    ) -> dict[str, Any]:
+        """Simulates a multi-step plan via the engine.
+
+        Args:
+            project_id: The target project ID.
+            plan: The plan dictionary.
+            mode: Execution mode.
+
+        Returns:
+            Execution results wrapped in ApiResponse (simulated=True).
+        """
+        try:
+            plan_obj = ExecutionPlan(**plan)
+        except Exception as e:
+            return ApiResponse(
+                code=1, message=f"Invalid plan: {str(e)}"
+            ).model_dump(mode="json")
+
+        results = self.engine.execute_plan(
+            project_id=project_id,
+            plan=plan_obj,
+            user_roles=["admin"],
+            user_id="api_user",
+            simulate=True,
+        )
+        
+        all_success = all(res.status == "success" for res in results)
+        
+        return ApiResponse(
+            code=0 if all_success else 1,
+            message="Plan simulated" if all_success else "Plan simulation partially failed or rejected",
+            data=[res.model_dump(mode="json") for res in results],
+        ).model_dump(mode="json")
 
     def revert_snapshot(
         self, project_id: str, snapshot_id: str
@@ -115,10 +213,14 @@ class ApiEndpoints:
             snapshot_id: The snapshot ID to revert to.
 
         Returns:
-            The execution result.
+            The execution result wrapped in ApiResponse.
         """
         result = self.engine.revert_to_snapshot(project_id, snapshot_id)
-        return result.model_dump(mode="json")
+        return ApiResponse(
+            code=0 if result.status == "success" else 1,
+            message=result.message or result.status,
+            data=result.model_dump(mode="json"),
+        ).model_dump(mode="json")
 
     def webhook_execute(
         self,
@@ -139,15 +241,15 @@ class ApiEndpoints:
         # 1. Load config
         webhook = self.engine.repository.get_webhook(webhook_id)
         if not webhook:
-            return {"status": "error", "message": "Webhook not found"}
+            return ApiResponse(code=1, message="Webhook not found").model_dump(mode="json")
 
         if not webhook.get("enabled", True):
-            return {"status": "error", "message": "Webhook disabled"}
+            return ApiResponse(code=1, message="Webhook disabled").model_dump(mode="json")
 
         # 2. Verify Signature (Simplification: exact match with secret)
         # In production, use HMAC-SHA256 of the raw body.
         if signature != webhook["secret"]:
-            return {"status": "rejected", "message": "Invalid signature"}
+            return ApiResponse(code=1, message="Invalid signature").model_dump(mode="json")
 
         # 3. Template Rendering (Simple Key Substitution)
         inputs = {}
@@ -186,7 +288,11 @@ class ApiEndpoints:
             user_id="webhook",
         )
 
-        return result.model_dump(mode="json")
+        return ApiResponse(
+            code=0 if result.status == "success" else 1,
+            message=result.message or result.status,
+            data=result.model_dump(mode="json"),
+        ).model_dump(mode="json")
 
     def get_registry(self, project_id: str, user_id: str | None = None) -> dict[str, Any]:
         """Returns the current Action and Component registries.
@@ -214,16 +320,18 @@ class ApiEndpoints:
                 if a.permission.visibility != "developer"
             ]
 
-        return {
-            "components": [
-                c.model_dump(mode="json")
-                for c in self.engine.registry.list_components()
-            ],
-            "actions": [
-                a.model_dump(mode="json")
-                for a in actions
-            ],
-        }
+        return ApiResponse(
+            data={
+                "components": [
+                    c.model_dump(mode="json")
+                    for c in self.engine.registry.list_components()
+                ],
+                "actions": [
+                    a.model_dump(mode="json")
+                    for a in actions
+                ],
+            }
+        ).model_dump(mode="json")
 
     def get_audit_log(
         self, project_id: str, limit: int = 100
@@ -240,7 +348,9 @@ class ApiEndpoints:
         history = self.engine.repository.get_execution_history(
             project_id, limit
         )
-        return [res.model_dump(mode="json") for res in history]
+        return ApiResponse(
+            data=[res.model_dump(mode="json") for res in history]
+        ).model_dump(mode="json")
 
     def manage_project(
         self,
@@ -256,42 +366,38 @@ class ApiEndpoints:
             project_id: Required for archive/purge.
 
         Returns:
-            Result dictionary.
+            Result wrapped in ApiResponse.
         """
         if op == ProjectOp.CREATE:
             if not name:
-                return {
-                    "status": "error",
-                    "message": "Name required for create",
-                }
+                return ApiResponse(
+                    code=1, message="Name required for create"
+                ).model_dump(mode="json")
             # Generate ID if not provided (though param says project_id optional, usually generated)
             pid = project_id or str(uuid.uuid4())
             self.engine.repository.create_project(pid, name)
-            return {
-                "status": "success",
-                "project_id": pid,
-                "message": "Project created",
-            }
+            return ApiResponse(
+                message="Project created",
+                data={"project_id": pid},
+            ).model_dump(mode="json")
 
         elif op == ProjectOp.ARCHIVE:
             if not project_id:
-                return {
-                    "status": "error",
-                    "message": "Project ID required for archive",
-                }
+                return ApiResponse(
+                    code=1, message="Project ID required for archive"
+                ).model_dump(mode="json")
             self.engine.repository.archive_project(project_id)
-            return {"status": "success", "message": "Project archived"}
+            return ApiResponse(message="Project archived").model_dump(mode="json")
 
         elif op == ProjectOp.PURGE:
             if not project_id:
-                return {
-                    "status": "error",
-                    "message": "Project ID required for purge",
-                }
+                return ApiResponse(
+                    code=1, message="Project ID required for purge"
+                ).model_dump(mode="json")
             self.engine.repository.purge_project(project_id)
-            return {"status": "success", "message": "Project purged"}
+            return ApiResponse(message="Project purged").model_dump(mode="json")
 
-        return {"status": "error", "message": f"Unknown operation: {op}"}
+        return ApiResponse(code=1, message=f"Unknown operation: {op}").model_dump(mode="json")
 
     def manage_membership(
         self,
@@ -309,32 +415,31 @@ class ApiEndpoints:
             role: Role to assign (viewer, operator, admin).
 
         Returns:
-            Result dictionary.
+            Result wrapped in ApiResponse.
         """
         if op == MembershipOp.ADD:
             if not role:
-                return {"status": "error", "message": "Role required for add"}
+                return ApiResponse(code=1, message="Role required for add").model_dump(mode="json")
             self.engine.repository.add_project_member(
                 project_id, username, role
             )
-            return {"status": "success", "message": "Member added"}
+            return ApiResponse(message="Member added").model_dump(mode="json")
 
         elif op == MembershipOp.REMOVE:
             self.engine.repository.remove_project_member(project_id, username)
-            return {"status": "success", "message": "Member removed"}
+            return ApiResponse(message="Member removed").model_dump(mode="json")
 
         elif op == MembershipOp.UPDATE_ROLE:
             if not role:
-                return {
-                    "status": "error",
-                    "message": "Role required for update_role",
-                }
+                return ApiResponse(
+                    code=1, message="Role required for update_role"
+                ).model_dump(mode="json")
             self.engine.repository.update_project_member_role(
                 project_id, username, role
             )
-            return {"status": "success", "message": "Role updated"}
+            return ApiResponse(message="Role updated").model_dump(mode="json")
 
-        return {"status": "error", "message": f"Unknown operation: {op}"}
+        return ApiResponse(code=1, message=f"Unknown operation: {op}").model_dump(mode="json")
 
     def manage_webhook(
         self,
@@ -350,43 +455,39 @@ class ApiEndpoints:
             config: Required for create/update.
 
         Returns:
-            Result dictionary.
+            Result wrapped in ApiResponse.
         """
         if op == WebhookOp.CREATE:
             if not config:
-                return {
-                    "status": "error",
-                    "message": "Config required for create",
-                }
+                return ApiResponse(
+                    code=1, message="Config required for create"
+                ).model_dump(mode="json")
             if not config.get("id"):
                 config["id"] = str(uuid.uuid4())
             self.engine.repository.save_webhook(config)
-            return {
-                "status": "success",
-                "webhook_id": config["id"],
-                "message": "Webhook created",
-            }
+            return ApiResponse(
+                message="Webhook created",
+                data={"webhook_id": config["id"]},
+            ).model_dump(mode="json")
 
         elif op == WebhookOp.UPDATE:
             if not webhook_id or not config:
-                return {
-                    "status": "error",
-                    "message": "Webhook ID and config required for update",
-                }
+                return ApiResponse(
+                    code=1, message="Webhook ID and config required for update"
+                ).model_dump(mode="json")
             config["id"] = webhook_id  # Ensure ID match
             self.engine.repository.save_webhook(config)
-            return {"status": "success", "message": "Webhook updated"}
+            return ApiResponse(message="Webhook updated").model_dump(mode="json")
 
         elif op == WebhookOp.DELETE:
             if not webhook_id:
-                return {
-                    "status": "error",
-                    "message": "Webhook ID required for delete",
-                }
+                return ApiResponse(
+                    code=1, message="Webhook ID required for delete"
+                ).model_dump(mode="json")
             self.engine.repository.delete_webhook(webhook_id)
-            return {"status": "success", "message": "Webhook deleted"}
+            return ApiResponse(message="Webhook deleted").model_dump(mode="json")
 
-        return {"status": "error", "message": f"Unknown operation: {op}"}
+        return ApiResponse(code=1, message=f"Unknown operation: {op}").model_dump(mode="json")
 
     def manage_schedule(
         self,
@@ -402,43 +503,39 @@ class ApiEndpoints:
             config: Required for create/update.
 
         Returns:
-            Result dictionary.
+            Result wrapped in ApiResponse.
         """
         if op == ScheduleOp.CREATE:
             if not config:
-                return {
-                    "status": "error",
-                    "message": "Config required for create",
-                }
+                return ApiResponse(
+                    code=1, message="Config required for create"
+                ).model_dump(mode="json")
             if not config.get("id"):
                 config["id"] = str(uuid.uuid4())
             self.engine.repository.save_schedule(config)
-            return {
-                "status": "success",
-                "schedule_id": config["id"],
-                "message": "Schedule created",
-            }
+            return ApiResponse(
+                message="Schedule created",
+                data={"schedule_id": config["id"]},
+            ).model_dump(mode="json")
 
         elif op == ScheduleOp.UPDATE:
             if not schedule_id or not config:
-                return {
-                    "status": "error",
-                    "message": "Schedule ID and config required for update",
-                }
+                return ApiResponse(
+                    code=1, message="Schedule ID and config required for update"
+                ).model_dump(mode="json")
             config["id"] = schedule_id  # Ensure ID match
             self.engine.repository.save_schedule(config)
-            return {"status": "success", "message": "Schedule updated"}
+            return ApiResponse(message="Schedule updated").model_dump(mode="json")
 
         elif op == ScheduleOp.DELETE:
             if not schedule_id:
-                return {
-                    "status": "error",
-                    "message": "Schedule ID required for delete",
-                }
+                return ApiResponse(
+                    code=1, message="Schedule ID required for delete"
+                ).model_dump(mode="json")
             self.engine.repository.delete_schedule(schedule_id)
-            return {"status": "success", "message": "Schedule deleted"}
+            return ApiResponse(message="Schedule deleted").model_dump(mode="json")
 
-        return {"status": "error", "message": f"Unknown operation: {op}"}
+        return ApiResponse(code=1, message=f"Unknown operation: {op}").model_dump(mode="json")
 
     def update_project_policy(
         self, project_id: str, policy: dict[str, Any]
@@ -450,7 +547,7 @@ class ApiEndpoints:
             policy: Policy dictionary.
 
         Returns:
-            Result dictionary.
+            Result wrapped in ApiResponse.
         """
         self.engine.repository.set_project_limits(project_id, policy)
-        return {"status": "success", "message": "Policy updated"}
+        return ApiResponse(message="Policy updated").model_dump(mode="json")

@@ -5,7 +5,10 @@ import os
 
 import yaml
 
+from gradio_chat_agent.observability.logging import get_logger, setup_logging
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
+
+logger = get_logger(__name__)
 
 
 def load_policy(file_path: str, project_id: str, db_url: str):
@@ -25,10 +28,11 @@ def load_policy(file_path: str, project_id: str, db_url: str):
 
     repo = SQLStateRepository(db_url)
     repo.set_project_limits(project_id, policy)
-    print(f"Loaded policy for project {project_id} from {file_path}")
+    logger.info(f"Loaded policy for project {project_id} from {file_path}")
 
 
 if __name__ == "__main__":
+    setup_logging()
     parser = argparse.ArgumentParser(
         description="Load a policy YAML file into the database."
     )
