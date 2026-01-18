@@ -68,7 +68,7 @@
 - [ ] **Versioning:** Update the Registry to support versioned components/actions (e.g., `demo.counter@v1`).
 - [ ] **Standard Library Expansion:** Expand the `std` namespace with common components (`std.text_input`, `std.slider`, `std.status_indicator`) and layouts to provide a consistent base for all projects.
 - [ ] **Web Automation Suite:** Implement a high-level browser component suite (`browser.click`, `browser.type`, `browser.scroll`) based on Playwright.
-- [ ] **Standard Model/Inference Suite:** Implement the `model.selector` and `inference.run` examples from the documentation as a reusable package.
+- [x] **Standard Model/Inference Suite:** Implement the `model.selector` and `inference.run` examples from the documentation as a reusable package.
 
 ## 7. Developer Experience (CLI & API)
 
@@ -115,7 +115,7 @@
 - [ ] **Secret Rotation:** Add API endpoints to rotate secrets for webhooks and other credentials.
 - [ ] **Bearer Token Lifecycle:** Implement logic for Admins to generate, list, and revoke API Bearer Tokens, moving beyond the hardcoded "admin" role for headless access.
 - [x] **CORS Configuration:** Integrate `GRADIO_ALLOWED_ORIGINS` into the server launch logic to allow secure cross-origin automation as specified in the documentation.
-- [ ] **State Integrity Verification:** Implement a checksum/hashing system for state snapshots to detect and alert on unauthorized modifications.
+- [x] **State Integrity Verification:** Implement a checksum/hashing system for state snapshots to detect and alert on unauthorized modifications.
 
 ## 11. Identity & Access (OIDC)
 
@@ -128,7 +128,7 @@
 
 ## 12. Deployment & Infrastructure
 
-- [ ] **Production Dockerfile:** Create a root `Dockerfile` using `uv` and multi-stage builds, following the structure in the deployment guide.
+- [x] **Production Dockerfile:** Create a root `Dockerfile` using `uv` and multi-stage builds, following the structure in the deployment guide.
 - [x] **Health Check Endpoint:** Implement a dedicated FastAPI-based health endpoint (e.g., `/health`) to verify database and engine readiness.
 - [ ] **Alembic Migrations:** Set up Alembic to manage database schema changes instead of relying on `metadata.create_all`.
 - [ ] **Gunicorn/Uvicorn Wrapper:** Update the entry point to support production-grade ASGI servers with multiple worker processes.

@@ -661,7 +661,7 @@ class SQLStateRepository(StateRepository):
                     .group_by(Execution.status)
                 )
 
-                counts = dict(session.execute(stmt).tuples())
+                counts = dict(session.execute(stmt).all())
                 success_count = counts.get("success", 0)
                 failed_count = counts.get("failed", 0)
                 rejected_count = counts.get("rejected", 0)

@@ -96,6 +96,7 @@ def test_app_health_endpoint_failure():
         def delete_user(self, uid): pass
         def get_user(self, uid): pass
         def list_users(self): pass
+        def get_org_rollup(self): return {}
 
     app = FastAPI()
     repository = BrokenRepo()

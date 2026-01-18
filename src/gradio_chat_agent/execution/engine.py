@@ -38,7 +38,7 @@ from gradio_chat_agent.observability.metrics import (
 )
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
-from gradio_chat_agent.utils import compute_state_diff
+from gradio_chat_agent.utils import compute_state_diff, compute_checksum
 
 
 logger = get_logger(__name__)
@@ -467,6 +467,19 @@ class ExecutionEngine:
                     current_snapshot = StateSnapshot(
                         snapshot_id=str(uuid.uuid4()), components={}
                     )
+                
+                # --- State Integrity Verification ---
+                if current_snapshot.checksum:
+                    actual_checksum = compute_checksum(current_snapshot.components)
+                    if actual_checksum != current_snapshot.checksum:
+                        return self._create_failure(
+                            project_id,
+                            intent,
+                            f"State integrity violation: Snapshot {current_snapshot.snapshot_id} has been tampered with.",
+                            code="integrity_violation",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                        )
 
             # 4. Resolve Action
             action = self.registry.get_action(intent.action_id)
@@ -643,7 +656,10 @@ class ExecutionEngine:
 
             # 7. Precondition Check
             # Safe evaluation context
-            eval_context = {"state": current_snapshot.components}
+            eval_context = {
+                "state": current_snapshot.components,
+                "inputs": intent.inputs or {},
+            }
             for precondition in action.preconditions:
                 try:
                     if not self._safe_eval(precondition.expr, eval_context):
@@ -805,7 +821,9 @@ class ExecutionEngine:
                 return result
 
             new_snapshot = StateSnapshot(
-                snapshot_id=new_snapshot_id, components=new_components
+                snapshot_id=new_snapshot_id,
+                components=new_components,
+                checksum=compute_checksum(new_components)
             )
 
             self.repository.save_snapshot(project_id, new_snapshot)
@@ -861,6 +879,7 @@ class ExecutionEngine:
             new_snapshot = StateSnapshot(
                 snapshot_id=new_snapshot_id,
                 components=new_components,
+                checksum=compute_checksum(new_components)
             )
 
             diffs = compute_state_diff(

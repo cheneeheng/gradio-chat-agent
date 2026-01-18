@@ -5,7 +5,7 @@ application's components at a specific point in time.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -29,4 +29,8 @@ class StateSnapshot(BaseModel):
     components: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description="Dictionary mapping component IDs to their state objects.",
+    )
+    checksum: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of the components dictionary for integrity verification.",
     )

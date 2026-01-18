@@ -56,7 +56,7 @@ class TestUIController:
         engine.registry.list_actions.return_value = []
 
         res = controller.refresh_ui(pid, uid)
-        assert len(res) == 8
+        assert len(res) == 10
         assert res[0] == {}
         assert res[5] == {} # last_intent
         assert res[6] == {} # last_result
@@ -89,6 +89,12 @@ class TestUIController:
         res = controller.on_remove_member(pid, uid, "old")
         engine.repository.remove_project_member.assert_called_with(pid, "old")
         assert res[0] == []
+
+    def test_on_mock_login(self, setup):
+        controller, _, _, _, _ = setup
+        token, token_display = controller.on_mock_login()
+        assert token.startswith("sk-")
+        assert token == token_display
 
     def test_on_submit_plan(self, setup):
         controller, engine, adapter, pid, uid = setup
@@ -252,8 +258,8 @@ class TestUIController:
         assert res[8] == STATUS_READY_HTML
 
     def test_on_reject_plan(self, setup):
-        controller, _, _, _, _ = setup
-        res = controller.on_reject_plan([])
+        controller, _, _, pid, _ = setup
+        res = controller.on_reject_plan([], pid)
         assert "Plan rejected" in res[0][-1]["content"]
         assert res[4].get('visible') is False
         assert res[6] == {}

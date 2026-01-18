@@ -7,6 +7,7 @@ such as diff computation and common transformations.
 import os
 import base64
 import hashlib
+import json
 import mimetypes
 from typing import Any, Optional
 
@@ -60,6 +61,20 @@ def hash_password(password: str) -> str:
     In production, use a dedicated library like bcrypt or argon2.
     """
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def compute_checksum(components: dict[str, Any]) -> str:
+    """Computes a deterministic SHA-256 hash of a components dictionary.
+
+    Args:
+        components: The components state dictionary.
+
+    Returns:
+        A hex string representing the checksum.
+    """
+    # Use sort_keys=True for determinism
+    dump = json.dumps(components, sort_keys=True)
+    return hashlib.sha256(dump.encode("utf-8")).hexdigest()
 
 
 def compute_state_diff(
