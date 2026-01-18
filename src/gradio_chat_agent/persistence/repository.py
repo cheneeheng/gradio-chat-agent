@@ -368,7 +368,9 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
-    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_webhooks(
+        self, project_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
         """Lists all webhooks.
 
         Args:
@@ -397,6 +399,15 @@ class StateRepository(ABC):
 
         Returns:
             A list of dictionaries containing user_id and role.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def get_org_rollup(self) -> dict[str, Any]:
+        """Aggregates usage and execution stats across all projects.
+
+        Returns:
+            A dictionary containing platform-wide statistics.
         """
         pass  # pragma: no cover
 

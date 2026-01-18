@@ -30,10 +30,10 @@
 ## 3. User Interface & Experience
 
 - [x] **Team/Membership Management UI:** Implement a "Team" or "Settings" tab visible only to Admins, allowing for inviting users, updating roles (`viewer`, `operator`, `admin`), and removing members.
-- [ ] **Rich UI Binding:** Implement a declarative mechanism to bind Gradio components (Sliders, Checkboxes, etc.) directly to paths in the `StateSnapshot`. Ensure UI updates are a pure function of the central state as required by the registry contract.
+- [x] **Rich UI Binding:** Implement a declarative mechanism to bind Gradio components (Sliders, Checkboxes, etc.) directly to paths in the `StateSnapshot`. Ensure UI updates are a pure function of the central state as required by the registry contract.
 - [x] **Custom Theme:** Create `src/gradio_chat_agent/ui/theme.py` using Gradio's `Theme` class to establish a consistent brand identity (colors, fonts, spacing).
 - [x] **CSS Styling:** Inject custom CSS into the `gr.Blocks` layout to refine the appearance of Chatbot bubbles, Plan Preview blocks, and state JSON viewers.
-- [ ] **Session Token Management:** Update the UI state to include `session_token` handling for future authenticated OIDC requests.
+- [x] **Session Token Management:** Update the UI state to include `session_token` handling for future authenticated OIDC requests.
 - [x] **Raw Trace Inspectors:** Add specialized tabs in the State Inspector to display the raw JSON of the last `ChatIntent` and `ExecutionResult` for developer debugging.
 - [x] **Visual Action Feedback:** Implement "Success/Failure" animations or status indicators directly on the components in the State Inspector.
 
@@ -99,7 +99,7 @@
   - High Failure Rates (e.g., >5% failure rate over 5 minutes)
   - LLM Latency Quantiles (e.g., P95 duration > 10 seconds)
   - Budget exhaustion (80%/90%/100% thresholds)
-- [ ] **Org-level Rollups:** Implement global management APIs to aggregate usage, costs, and audit logs across all projects.
+- [x] **Org-level Rollups:** Implement global management APIs to aggregate usage, costs, and audit logs across all projects.
 
 ## 9. Platform Management
 
@@ -107,7 +107,7 @@
 - [x] **Authority Separation:** Implement platform-wide RBAC logic to distinguish between System Admins (global access) and Project Admins (scoped access).
 - [x] **Policy Templating:** Implement a "System Template" system to automatically apply default rate limits and budgets when a new project is created via `api_manage_project`.
 - [x] **Purge Confirmation Gate:** Add a required confirmation flag and high-risk validation logic to the `PURGE` operation in `ApiEndpoints` to prevent accidental global data loss.
-- [ ] **Global Observability (Rollups):** Implement cross-project analytics (`api_org_rollup`) allowing System Admins to view aggregate usage, costs, and failure rates across the entire platform.
+- [x] **Global Observability (Rollups):** Implement cross-project analytics (`api_org_rollup`) allowing System Admins to view aggregate usage, costs, and failure rates across the entire platform.
 
 ## 10. Secrets Management & Security
 

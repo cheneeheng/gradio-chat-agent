@@ -17,6 +17,7 @@ from gradio_chat_agent.models.enums import (
 )
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
+from gradio_chat_agent.ui.binder import UIBinder
 from gradio_chat_agent.ui.theme import AgentTheme
 from gradio_chat_agent.utils import encode_media
 
@@ -69,6 +70,7 @@ class UIController:
     def __init__(self, engine: ExecutionEngine, adapter: AgentAdapter):
         self.engine = engine
         self.adapter = adapter
+        self.binder = UIBinder()
 
     def fetch_state(self, pid: str) -> dict:
         """Fetch latest state components for a project."""
@@ -100,6 +102,7 @@ class UIController:
         }
         facts_data = self.fetch_facts_df(pid, uid)
         members_data = self.fetch_members_df(pid)
+        updates = self.binder.get_updates(state)
         return (
             state,
             {},
@@ -109,6 +112,9 @@ class UIController:
             {},  # last_intent
             {},  # last_result
             STATUS_READY_HTML,
+            None,  # session_token_state
+            None,  # session_token_display
+            *updates,
         )
 
     def on_add_fact(self, pid: str, uid: str, key: str, val: str):
@@ -122,6 +128,13 @@ class UIController:
         if key:
             self.engine.repository.delete_session_fact(pid, uid, key)
         return self.fetch_facts_df(pid, uid), ""
+
+    def on_mock_login(self):
+        """Generates a mock session token."""
+        import uuid
+
+        token = f"sk-{uuid.uuid4().hex[:12]}"
+        return token, token
 
     def on_add_member(self, pid: str, uid: str, target_uid: str, role: str):
         """Handler for adding a project member."""
@@ -206,6 +219,7 @@ class UIController:
         except Exception as e:
             err_msg = f"Agent Error: {str(e)}"
             new_history.append({"role": "assistant", "content": err_msg})
+            updates = self.binder.get_updates(state_dict)
             return (
                 "",
                 new_history,
@@ -217,10 +231,12 @@ class UIController:
                 {},  # last_intent
                 {},  # last_result
                 STATUS_FAILED_HTML,
+                *updates,
             )
 
         # 4. Handle Result
         last_intent_json = result.model_dump(mode="json") if result else {}
+        updates = self.binder.get_updates(state_dict)
         if isinstance(result, ExecutionPlan):
             plan_md = f"## Proposed Plan (ID: {result.plan_id})\n"
             for i, step in enumerate(result.steps):
@@ -244,6 +260,7 @@ class UIController:
                 last_intent_json,
                 {},  # last_result
                 STATUS_PENDING_HTML,
+                *updates,
             )
 
         elif isinstance(result, ChatIntent):
@@ -263,6 +280,7 @@ class UIController:
                     last_intent_json,
                     {},  # last_result
                     STATUS_READY_HTML,
+                    *updates,
                 )
 
             elif intent.type == IntentType.ACTION_CALL:
@@ -279,6 +297,7 @@ class UIController:
                         pid
                     )
                     new_state = new_snapshot.components if new_snapshot else {}
+                    new_updates = self.binder.get_updates(new_state)
 
                     return (
                         "",
@@ -291,6 +310,7 @@ class UIController:
                         last_intent_json,
                         last_result_json,
                         STATUS_SUCCESS_HTML,
+                        *new_updates,
                     )
 
                 elif (
@@ -310,6 +330,7 @@ class UIController:
                         last_intent_json,
                         last_result_json,
                         STATUS_PENDING_HTML,
+                        *updates,
                     )
 
                 elif exec_result.status == ExecutionStatus.PENDING_APPROVAL:
@@ -326,6 +347,7 @@ class UIController:
                         last_intent_json,
                         last_result_json,
                         STATUS_PENDING_HTML,
+                        *updates,
                     )
 
                 else:
@@ -342,6 +364,7 @@ class UIController:
                         last_intent_json,
                         last_result_json,
                         STATUS_FAILED_HTML,
+                        *updates,
                     )
 
         return (
@@ -355,11 +378,14 @@ class UIController:
             {},  # last_intent
             {},  # last_result
             STATUS_READY_HTML,
+            *updates,
         )
 
     def on_approve_plan(self, plan, history, pid, uid):
         """Handler for approving a pending plan."""
         if not plan:
+            state = self.fetch_state(pid)
+            updates = self.binder.get_updates(state)
             return (
                 history,
                 {},
@@ -370,6 +396,7 @@ class UIController:
                 {},  # last_intent
                 {},  # last_result
                 STATUS_READY_HTML,
+                *updates,
             )
 
         # Determine user role
@@ -396,6 +423,7 @@ class UIController:
 
         snapshot = self.engine.repository.get_latest_snapshot(pid)
         new_state = snapshot.components if snapshot else {}
+        updates = self.binder.get_updates(new_state)
 
         last_intent_json = plan.model_dump(mode="json")
         last_result_json = [res.model_dump(mode="json") for res in results]
@@ -410,11 +438,14 @@ class UIController:
             last_intent_json,
             last_result_json,
             STATUS_SUCCESS_HTML,
+            *updates,
         )
 
-    def on_reject_plan(self, history):
+    def on_reject_plan(self, history, pid):
         """Handler for rejecting a pending plan."""
         history.append({"role": "assistant", "content": "Plan rejected."})
+        state = self.fetch_state(pid)
+        updates = self.binder.get_updates(state)
         return (
             history,
             {},  # state_json (no change)
@@ -425,6 +456,7 @@ class UIController:
             {},  # last_intent
             {},  # last_result
             STATUS_READY_HTML,
+            *updates,
         )
 
 
@@ -450,6 +482,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         user_id_state = gr.State(DEFAULT_USER_ID)
         history_state = gr.State([])
         pending_plan_state = gr.State(None)
+        session_token_state = gr.State(None)
 
         with gr.Row():
             # --- Left Sidebar ---
@@ -477,27 +510,53 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
 
             # --- Main Chat Area ---
             with gr.Column(scale=2):
-                chatbot = gr.Chatbot(label="Agent", height=600)
-                msg_input = gr.MultimodalTextbox(
-                    placeholder="Type a command or upload image...",
-                    label="Command",
-                    lines=2,
-                )
-                submit_btn = gr.Button("Submit", variant="primary")
+                with gr.Tabs():
+                    with gr.Tab("Chat"):
+                        chatbot = gr.Chatbot(label="Agent", height=600)
+                        msg_input = gr.MultimodalTextbox(
+                            placeholder="Type a command or upload image...",
+                            label="Command",
+                            lines=2,
+                        )
+                        submit_btn = gr.Button("Submit", variant="primary")
 
-                # Plan Preview (Hidden by default)
-                with gr.Group(
-                    visible=False, elem_classes="plan-preview"
-                ) as plan_group:
-                    gr.Markdown("### Proposed Plan")
-                    plan_display = gr.Markdown("No plan pending.")
-                    with gr.Row():
-                        approve_plan_btn = gr.Button(
-                            "Approve Plan", variant="primary"
+                        # Plan Preview (Hidden by default)
+                        with gr.Group(
+                            visible=False, elem_classes="plan-preview"
+                        ) as plan_group:
+                            gr.Markdown("### Proposed Plan")
+                            plan_display = gr.Markdown("No plan pending.")
+                            with gr.Row():
+                                approve_plan_btn = gr.Button(
+                                    "Approve Plan", variant="primary"
+                                )
+                                reject_plan_btn = gr.Button(
+                                    "Reject Plan", variant="stop"
+                                )
+                    with gr.Tab("Dashboard"):
+                        gr.Markdown("### Bound Components")
+                        gr.Markdown(
+                            "These components are bound directly to the application state."
                         )
-                        reject_plan_btn = gr.Button(
-                            "Reject Plan", variant="stop"
-                        )
+
+                        with gr.Row():
+                            counter_slider = gr.Slider(
+                                label="Counter (Bound)",
+                                minimum=0,
+                                maximum=100,
+                                interactive=False,
+                            )
+                            controller.binder.bind(
+                                "demo.counter.value", counter_slider
+                            )
+
+                            counter_number = gr.Number(
+                                label="Counter Value (Bound)",
+                                interactive=False,
+                            )
+                            controller.binder.bind(
+                                "demo.counter.value", counter_number
+                            )
 
             # --- Right State Inspector ---
             with gr.Column(scale=1, min_width=300):
@@ -585,8 +644,17 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             refresh_team_btn = gr.Button(
                                 "Refresh Team", size="sm", variant="secondary"
                             )
+                    with gr.Tab("Auth"):
+                        gr.Markdown("### Session Authentication")
+                        session_token_display = gr.Textbox(
+                            label="Session Token",
+                            interactive=False,
+                            placeholder="No active session token",
+                        )
+                        mock_login_btn = gr.Button("Mock Login (Set Token)")
 
         # --- Event Bindings ---
+        bound_outputs = controller.binder.get_bound_components()
 
         # Initial Load
         demo.load(
@@ -601,6 +669,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 intent_json,
                 result_json,
                 status_indicator,
+                session_token_state,
+                session_token_display,
+                *bound_outputs,
             ],
         )
 
@@ -625,6 +696,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 intent_json,
                 result_json,
                 status_indicator,
+                *bound_outputs,
             ],
         )
         msg_input.submit(
@@ -647,6 +719,7 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 intent_json,
                 result_json,
                 status_indicator,
+                *bound_outputs,
             ],
         )
 
@@ -669,6 +742,24 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 intent_json,
                 result_json,
                 status_indicator,
+                *bound_outputs,
+            ],
+        )
+
+        reject_plan_btn.click(
+            controller.on_reject_plan,
+            inputs=[chatbot, project_id_state],
+            outputs=[
+                chatbot,
+                state_json,
+                diff_json,
+                plan_display,
+                plan_group,
+                pending_plan_state,
+                intent_json,
+                result_json,
+                status_indicator,
+                *bound_outputs,
             ],
         )
 
@@ -714,6 +805,13 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
             controller.fetch_members_df,
             inputs=[project_id_state],
             outputs=[team_df],
+        )
+
+        # Auth Handlers
+        mock_login_btn.click(
+            controller.on_mock_login,
+            inputs=[],
+            outputs=[session_token_state, session_token_display],
         )
 
         # API Endpoints (Keeping existing connections)
@@ -828,6 +926,15 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 inputs=[api_audit_project_id, api_audit_limit],
                 outputs=[api_audit_result],
                 api_name="get_audit_log",
+            )
+
+            # api_org_rollup
+            api_rollup_result = gr.JSON(label="org_rollup")
+            gr.Button("Get Org Rollup API").click(
+                fn=api.api_org_rollup,
+                inputs=[user_id_state],
+                outputs=[api_rollup_result],
+                api_name="api_org_rollup",
             )
 
     return demo

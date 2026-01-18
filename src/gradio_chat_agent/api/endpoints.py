@@ -692,9 +692,9 @@ class ApiEndpoints:
             ).model_dump(mode="json")
 
         self.engine.repository.delete_user(target_user_id)
-        return ApiResponse(message=f"User {target_user_id} deleted").model_dump(
-            mode="json"
-        )
+        return ApiResponse(
+            message=f"User {target_user_id} deleted"
+        ).model_dump(mode="json")
 
     def budget_forecast(self, project_id: str) -> dict[str, Any]:
         """Returns budget usage stats and exhaustion predictions for a project.
@@ -711,4 +711,19 @@ class ApiEndpoints:
         forecast = service.get_budget_forecast(project_id)
         return ApiResponse(data=forecast).model_dump(mode="json")
 
-    
+    def api_org_rollup(self, user_id: str | None = None) -> dict[str, Any]:
+        """Provides a summary of all projects and platform-wide stats.
+
+        Args:
+            user_id: ID of the user performing the operation (must be system admin).
+
+        Returns:
+            Rollup data wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id):
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
+        rollup = self.engine.repository.get_org_rollup()
+        return ApiResponse(data=rollup).model_dump(mode="json")

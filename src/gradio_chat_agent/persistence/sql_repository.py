@@ -387,7 +387,7 @@ class SQLStateRepository(StateRepository):
             webhook = session.get(Webhook, webhook_id)
             if not webhook:
                 return None
-            
+
             # Decrypt secret
             try:
                 secret = self.secrets.decrypt(webhook.secret)
@@ -639,6 +639,70 @@ class SQLStateRepository(StateRepository):
             rows = session.execute(stmt).scalars().all()
             return [{"user_id": row.user_id, "role": row.role} for row in rows]
 
+    def get_org_rollup(self) -> dict[str, Any]:
+        """Aggregates usage and execution stats across all projects.
+
+        Returns:
+            A dictionary containing platform-wide statistics.
+        """
+        with self.SessionLocal() as session:
+            # Get all projects
+            projects = session.execute(select(Project)).scalars().all()
+
+            projects_stats = {}
+            total_executions = 0
+            total_cost = 0.0
+
+            for project in projects:
+                # Execution counts
+                stmt = (
+                    select(Execution.status, func.count(Execution.id))
+                    .where(Execution.project_id == project.id)
+                    .group_by(Execution.status)
+                )
+
+                counts = dict(session.execute(stmt).tuples())
+                success_count = counts.get("success", 0)
+                failed_count = counts.get("failed", 0)
+                rejected_count = counts.get("rejected", 0)
+                project_total_execs = sum(counts.values())
+
+                # Total cost for this project
+                # In SQL we have a 'cost' column in Execution table
+                stmt_cost = select(func.sum(Execution.cost)).where(
+                    Execution.project_id == project.id,
+                    Execution.status == "success",
+                )
+                project_cost = session.execute(stmt_cost).scalar() or 0.0
+
+                projects_stats[project.id] = {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "total_executions": project_total_execs,
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "rejected_count": rejected_count,
+                    "total_cost": float(project_cost),
+                }
+                total_executions += project_total_execs
+                total_cost += float(project_cost)
+
+            return {
+                "total_projects": len(projects),
+                "total_executions": total_executions,
+                "total_cost": total_cost,
+                "projects": projects_stats,
+            }
+
+    def check_health(self) -> bool:
+        """Verifies database connection with a simple query."""
+        try:
+            with self.SessionLocal() as session:
+                session.execute(select(1))
+                return True
+        except Exception:
+            return False
+
     def list_projects(self) -> list[dict[str, Any]]:
         """Lists all projects.
 
@@ -784,12 +848,3 @@ class SQLStateRepository(StateRepository):
                 }
                 for row in rows
             ]
-
-    def check_health(self) -> bool:
-        """Verifies database connection with a simple query."""
-        try:
-            with self.SessionLocal() as session:
-                session.execute(select(1))
-                return True
-        except Exception:
-            return False

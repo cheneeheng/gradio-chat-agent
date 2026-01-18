@@ -112,7 +112,9 @@ class InMemoryStateRepository(StateRepository):
         if user_id in self._users:
             self._users[user_id]["password_hash"] = password_hash
 
-    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_webhooks(
+        self, project_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
         """Lists all webhooks.
 
         Args:
@@ -122,7 +124,11 @@ class InMemoryStateRepository(StateRepository):
             A list of webhook dictionaries.
         """
         if project_id:
-            return [v for v in self._webhooks.values() if v.get("project_id") == project_id]
+            return [
+                v
+                for v in self._webhooks.values()
+                if v.get("project_id") == project_id
+            ]
         return list(self._webhooks.values())
 
     def list_enabled_schedules(self) -> list[dict[str, Any]]:
@@ -505,6 +511,52 @@ class InMemoryStateRepository(StateRepository):
             if v["project_id"] == project_id:
                 members.append({"user_id": v["user_id"], "role": v["role"]})
         return members
+
+    def get_org_rollup(self) -> dict[str, Any]:
+        """Aggregates usage and execution stats across all projects.
+
+        Returns:
+            A dictionary containing platform-wide statistics.
+        """
+        projects_stats = {}
+        total_executions = 0
+        total_cost = 0.0
+
+        for pid in self._projects:
+            history = self._executions.get(pid, [])
+            success_count = sum(
+                1 for e in history if e.status == ExecutionStatus.SUCCESS
+            )
+            failed_count = sum(
+                1 for e in history if e.status == ExecutionStatus.FAILED
+            )
+            rejected_count = sum(
+                1 for e in history if e.status == ExecutionStatus.REJECTED
+            )
+            project_cost = sum(
+                float(e.metadata.get("cost", 0.0))
+                for e in history
+                if e.status == ExecutionStatus.SUCCESS
+            )
+
+            projects_stats[pid] = {
+                "project_id": pid,
+                "project_name": self._projects[pid]["name"],
+                "total_executions": len(history),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "rejected_count": rejected_count,
+                "total_cost": project_cost,
+            }
+            total_executions += len(history)
+            total_cost += project_cost
+
+        return {
+            "total_projects": len(self._projects),
+            "total_executions": total_executions,
+            "total_cost": total_cost,
+            "projects": projects_stats,
+        }
 
     def check_health(self) -> bool:
         """In-memory is always healthy."""
