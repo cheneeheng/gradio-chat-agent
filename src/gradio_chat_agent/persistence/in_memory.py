@@ -35,6 +35,7 @@ class InMemoryStateRepository(StateRepository):
         self._projects: dict[str, dict[str, Any]] = {}
         self._memberships: dict[str, dict[str, Any]] = {}
         self._users: dict[str, dict[str, Any]] = {}
+        self._api_tokens: dict[str, dict[str, Any]] = {}
 
     def list_projects(self) -> list[dict[str, Any]]:
         """Lists all projects.
@@ -78,6 +79,76 @@ class InMemoryStateRepository(StateRepository):
             A list of user dictionaries.
         """
         return list(self._users.values())
+
+    def create_api_token(
+        self,
+        user_id: str,
+        name: str,
+        token_id: str,
+        expires_at: Optional[datetime] = None,
+    ):
+        """Creates a new API token for a user.
+
+        Args:
+            user_id: The ID of the owner.
+            name: A label for the token.
+            token_id: The unique token identifier.
+            expires_at: Optional expiration date.
+        """
+        self._api_tokens[token_id] = {
+            "id": token_id,
+            "user_id": user_id,
+            "name": name,
+            "created_at": datetime.now(),
+            "expires_at": expires_at,
+            "revoked_at": None,
+        }
+
+    def list_api_tokens(self, user_id: str) -> list[dict[str, Any]]:
+        """Lists all tokens for a user.
+
+        Args:
+            user_id: The ID of the user.
+
+        Returns:
+            A list of token dictionaries.
+        """
+        return [
+            v for v in self._api_tokens.values() if v["user_id"] == user_id
+        ]
+
+    def revoke_api_token(self, token_id: str):
+        """Revokes an API token.
+
+        Args:
+            token_id: The unique token identifier.
+        """
+        if token_id in self._api_tokens:
+            self._api_tokens[token_id]["revoked_at"] = datetime.now()
+
+    def validate_api_token(self, token_id: str) -> Optional[str]:
+        """Validates a token and returns the owner user_id if valid.
+
+        Args:
+            token_id: The unique token identifier.
+
+        Returns:
+            The user_id if valid and not expired/revoked, otherwise None.
+        """
+        token = self._api_tokens.get(token_id)
+        if not token:
+            return None
+
+        if token["revoked_at"]:
+            return None
+
+        if token["expires_at"]:
+            # Handle naive/aware comparison if needed, but in-memory uses local time usually
+            # For simplicity, we assume same format
+            if token["expires_at"] < datetime.now():
+                return None
+
+        return token["user_id"]
 
     def delete_user(self, user_id: str):
         """Permanently deletes a user.
@@ -355,6 +426,16 @@ class InMemoryStateRepository(StateRepository):
         """
         if webhook_id in self._webhooks:
             del self._webhooks[webhook_id]
+
+    def rotate_webhook_secret(self, webhook_id: str, new_secret: str):
+        """Updates the secret for a webhook.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+            new_secret: The new plain text secret to set.
+        """
+        if webhook_id in self._webhooks:
+            self._webhooks[webhook_id]["secret"] = new_secret
 
     def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a schedule configuration by ID.

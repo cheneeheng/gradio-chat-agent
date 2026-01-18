@@ -4,6 +4,7 @@ This module defines the abstract contract for state persistence.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Optional
 
 from gradio_chat_agent.models.execution_result import (
@@ -195,6 +196,16 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def rotate_webhook_secret(self, webhook_id: str, new_secret: str):
+        """Updates the secret for a webhook.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+            new_secret: The new plain text secret to set.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a schedule configuration by ID.
 
@@ -333,6 +344,57 @@ class StateRepository(ABC):
 
         Returns:
             A list of user dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def create_api_token(
+        self,
+        user_id: str,
+        name: str,
+        token_id: str,
+        expires_at: Optional[datetime] = None,
+    ):
+        """Creates a new API token for a user.
+
+        Args:
+            user_id: The ID of the owner.
+            name: A label for the token.
+            token_id: The unique token identifier.
+            expires_at: Optional expiration date.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def list_api_tokens(self, user_id: str) -> list[dict[str, Any]]:
+        """Lists all tokens for a user.
+
+        Args:
+            user_id: The ID of the user.
+
+        Returns:
+            A list of token dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def revoke_api_token(self, token_id: str):
+        """Revokes an API token.
+
+        Args:
+            token_id: The unique token identifier.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def validate_api_token(self, token_id: str) -> Optional[str]:
+        """Validates a token and returns the owner user_id if valid.
+
+        Args:
+            token_id: The unique token identifier.
+
+        Returns:
+            The user_id if valid and not expired/revoked, otherwise None.
         """
         pass  # pragma: no cover
 

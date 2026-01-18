@@ -66,7 +66,7 @@
 ## 6. Component Ecosystem
 
 - [ ] **Versioning:** Update the Registry to support versioned components/actions (e.g., `demo.counter@v1`).
-- [ ] **Standard Library Expansion:** Expand the `std` namespace with common components (`std.text_input`, `std.slider`, `std.status_indicator`) and layouts to provide a consistent base for all projects.
+- [x] **Standard Library Expansion:** Expand the `std` namespace with common components (`std.text_input`, `std.slider`, `std.status_indicator`) and layouts to provide a consistent base for all projects.
 - [ ] **Web Automation Suite:** Implement a high-level browser component suite (`browser.click`, `browser.type`, `browser.scroll`) based on Playwright.
 - [x] **Standard Model/Inference Suite:** Implement the `model.selector` and `inference.run` examples from the documentation as a reusable package.
 
@@ -112,8 +112,8 @@
 ## 10. Secrets Management & Security
 
 - [x] **Encryption:** Implement encryption for sensitive data at rest (e.g., Webhook secrets) in the `SQLStateRepository`.
-- [ ] **Secret Rotation:** Add API endpoints to rotate secrets for webhooks and other credentials.
-- [ ] **Bearer Token Lifecycle:** Implement logic for Admins to generate, list, and revoke API Bearer Tokens, moving beyond the hardcoded "admin" role for headless access.
+- [x] **Secret Rotation:** Add API endpoints to rotate secrets for webhooks and other credentials.
+- [x] **Bearer Token Lifecycle:** Implement logic for Admins to generate, list, and revoke API Bearer Tokens, moving beyond the hardcoded "admin" role for headless access.
 - [x] **CORS Configuration:** Integrate `GRADIO_ALLOWED_ORIGINS` into the server launch logic to allow secure cross-origin automation as specified in the documentation.
 - [x] **State Integrity Verification:** Implement a checksum/hashing system for state snapshots to detect and alert on unauthorized modifications.
 

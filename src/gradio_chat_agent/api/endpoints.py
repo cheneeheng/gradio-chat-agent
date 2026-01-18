@@ -574,6 +574,24 @@ class ApiEndpoints:
             code=1, message=f"Unknown operation: {op}"
         ).model_dump(mode="json")
 
+    def rotate_webhook_secret(
+        self, webhook_id: str, new_secret: str | None = None
+    ) -> dict[str, Any]:
+        """Rotates the secret for a webhook.
+
+        Args:
+            webhook_id: The ID of the webhook.
+            new_secret: Optional new secret. If not provided, a random one is generated.
+
+        Returns:
+            Result wrapped in ApiResponse.
+        """
+        secret = new_secret or str(uuid.uuid4())
+        self.engine.repository.rotate_webhook_secret(webhook_id, secret)
+        return ApiResponse(
+            message="Webhook secret rotated", data={"new_secret": secret}
+        ).model_dump(mode="json")
+
     def manage_schedule(
         self,
         op: ScheduleOp,
@@ -727,3 +745,89 @@ class ApiEndpoints:
 
         rollup = self.engine.repository.get_org_rollup()
         return ApiResponse(data=rollup).model_dump(mode="json")
+
+    def create_api_token(
+        self,
+        owner_user_id: str,
+        name: str,
+        user_id: str | None = None,
+        expires_in_days: int | None = None,
+    ) -> dict[str, Any]:
+        """Creates a new API token.
+
+        Args:
+            owner_user_id: The user ID who will own the token.
+            name: Label for the token.
+            user_id: The ID of the admin performing the operation.
+            expires_in_days: Optional validity period.
+
+        Returns:
+            The generated token wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id):
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
+        token_id = f"sk-{uuid.uuid4().hex}"
+        expires_at = None
+        if expires_in_days:
+            from datetime import timedelta
+
+            expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+
+        self.engine.repository.create_api_token(
+            owner_user_id, name, token_id, expires_at
+        )
+
+        return ApiResponse(
+            message="API token created",
+            data={
+                "token": token_id,
+                "name": name,
+                "owner": owner_user_id,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            },
+        ).model_dump(mode="json")
+
+    def list_api_tokens(
+        self, owner_user_id: str, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Lists API tokens for a user.
+
+        Args:
+            owner_user_id: The user to list tokens for.
+            user_id: The ID of the admin performing the operation.
+
+        Returns:
+            List of tokens wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id) and user_id != owner_user_id:
+            return ApiResponse(
+                code=1, message="Permission denied"
+            ).model_dump(mode="json")
+
+        tokens = self.engine.repository.list_api_tokens(owner_user_id)
+        return ApiResponse(data=tokens).model_dump(mode="json")
+
+    def revoke_api_token(
+        self, token_id: str, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Revokes an API token.
+
+        Args:
+            token_id: The token to revoke.
+            user_id: The ID of the admin performing the operation.
+
+        Returns:
+            Success message wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id):
+            # In a real system, owners should be able to revoke their own tokens.
+            # For simplicity, we stick to system admin for now.
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
+        self.engine.repository.revoke_api_token(token_id)
+        return ApiResponse(message="API token revoked").model_dump(mode="json")

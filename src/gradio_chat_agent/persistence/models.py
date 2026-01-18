@@ -96,6 +96,34 @@ class User(Base):
     )
 
 
+class ApiToken(Base):
+    """Represents an API Bearer Token for headless access.
+
+    Attributes:
+        id: Unique identifier for the token (the token itself or a hash).
+        user_id: The ID of the user who owns the token.
+        name: A human-readable label for the token.
+        created_at: Timestamp when the token was issued.
+        expires_at: Optional expiration timestamp.
+        revoked_at: Optional revocation timestamp.
+    """
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
+
 class Schedule(Base):
     """Represents a scheduled job for automated execution.
 

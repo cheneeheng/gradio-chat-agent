@@ -19,10 +19,12 @@ app = typer.Typer(help="Gradio Chat Agent Management CLI")
 project_app = typer.Typer(help="Manage projects")
 user_app = typer.Typer(help="Manage users")
 webhook_app = typer.Typer(help="Manage webhooks")
+token_app = typer.Typer(help="Manage API tokens")
 
 app.add_typer(project_app, name="project")
 app.add_typer(user_app, name="user")
 app.add_typer(webhook_app, name="webhook")
+app.add_typer(token_app, name="token")
 
 
 def get_repo():
@@ -153,6 +155,57 @@ def webhook_list(
         typer.echo(
             f"[{status}] {w['id']} (Project: {w['project_id']}, Action: {w['action_id']})"
         )
+
+
+@token_app.command("create")
+def token_create(
+    owner: Annotated[str, typer.Option(help="Username of the token owner")],
+    name: Annotated[str, typer.Option(help="Label for the token")],
+    expires_days: Annotated[
+        Optional[int], typer.Option(help="Days until expiration")
+    ] = None,
+):
+    """Creates a new API token."""
+    repo = get_repo()
+    import uuid
+    from datetime import datetime, timedelta
+
+    token_id = f"sk-{uuid.uuid4().hex}"
+    expires_at = None
+    if expires_days:
+        expires_at = datetime.utcnow() + timedelta(days=expires_days)
+
+    repo.create_api_token(owner, name, token_id, expires_at)
+    typer.echo(f"Token created: {name}")
+    typer.echo(f"Value: {token_id}")
+    if expires_at:
+        typer.echo(f"Expires at: {expires_at}")
+
+
+@token_app.command("list")
+def token_list(
+    owner: Annotated[str, typer.Option(help="Username of the token owner")],
+):
+    """Lists all API tokens for a user."""
+    repo = get_repo()
+    tokens = repo.list_api_tokens(owner)
+    if not tokens:
+        typer.echo(f"No tokens found for user: {owner}")
+        return
+
+    for t in tokens:
+        status = "Active" if not t["revoked_at"] else "Revoked"
+        typer.echo(f"[{status}] {t['id']}: {t['name']}")
+
+
+@token_app.command("revoke")
+def token_revoke(
+    token_id: Annotated[str, typer.Argument(help="The token ID to revoke")],
+):
+    """Revokes an API token."""
+    repo = get_repo()
+    repo.revoke_api_token(token_id)
+    typer.echo(f"Token revoked: {token_id}")
 
 
 if __name__ == "__main__":

@@ -37,6 +37,17 @@ from gradio_chat_agent.registry.demo_actions import (
 from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 
 # Import components/actions
+from gradio_chat_agent.registry.std_lib import (
+    text_input_component,
+    text_input_set_action,
+    text_input_set_handler,
+    slider_component,
+    slider_set_action,
+    slider_set_handler,
+    status_indicator_component,
+    status_indicator_update_action,
+    status_indicator_update_handler,
+)
 from gradio_chat_agent.registry.system_actions import (
     forget_action,
     forget_handler,
@@ -94,6 +105,16 @@ def main():
     registry.register_action(set_action, set_handler)
     registry.register_action(increment_action, increment_handler)
     registry.register_action(reset_action, reset_handler)
+
+    # Standard Library Actions
+    registry.register_component(text_input_component)
+    registry.register_action(text_input_set_action, text_input_set_handler)
+    registry.register_component(slider_component)
+    registry.register_action(slider_set_action, slider_set_handler)
+    registry.register_component(status_indicator_component)
+    registry.register_action(
+        status_indicator_update_action, status_indicator_update_handler
+    )
 
     # 2. Setup Persistence
     db_url = os.environ.get(

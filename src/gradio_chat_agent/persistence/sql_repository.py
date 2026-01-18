@@ -14,6 +14,7 @@ from gradio_chat_agent.models.execution_result import (
 )
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.persistence.models import (
+    ApiToken,
     Base,
     Execution,
     Project,
@@ -445,6 +446,20 @@ class SQLStateRepository(StateRepository):
                 session.delete(webhook)
                 session.commit()
 
+    def rotate_webhook_secret(self, webhook_id: str, new_secret: str):
+        """Updates the secret for a webhook.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+            new_secret: The new plain text secret to set.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if webhook:
+                encrypted_secret = self.secrets.encrypt(new_secret)
+                webhook.secret = encrypted_secret
+                session.commit()
+
     def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a schedule configuration by ID.
 
@@ -769,6 +784,87 @@ class SQLStateRepository(StateRepository):
                 }
                 for row in rows
             ]
+
+    def create_api_token(
+        self,
+        user_id: str,
+        name: str,
+        token_id: str,
+        expires_at: Optional[datetime] = None,
+    ):
+        """Creates a new API token for a user.
+
+        Args:
+            user_id: The ID of the owner.
+            name: A label for the token.
+            token_id: The unique token identifier.
+            expires_at: Optional expiration date.
+        """
+        with self.SessionLocal() as session:
+            db_token = ApiToken(
+                id=token_id, user_id=user_id, name=name, expires_at=expires_at
+            )
+            session.add(db_token)
+            session.commit()
+
+    def list_api_tokens(self, user_id: str) -> list[dict[str, Any]]:
+        """Lists all tokens for a user.
+
+        Args:
+            user_id: The ID of the user.
+
+        Returns:
+            A list of token dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(ApiToken).where(ApiToken.user_id == user_id)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "name": row.name,
+                    "created_at": row.created_at,
+                    "expires_at": row.expires_at,
+                    "revoked_at": row.revoked_at,
+                }
+                for row in rows
+            ]
+
+    def revoke_api_token(self, token_id: str):
+        """Revokes an API token.
+
+        Args:
+            token_id: The unique token identifier.
+        """
+        with self.SessionLocal() as session:
+            db_token = session.get(ApiToken, token_id)
+            if db_token:
+                db_token.revoked_at = datetime.utcnow()
+                session.commit()
+
+    def validate_api_token(self, token_id: str) -> Optional[str]:
+        """Validates a token and returns the owner user_id if valid.
+
+        Args:
+            token_id: The unique token identifier.
+
+        Returns:
+            The user_id if valid and not expired/revoked, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            db_token = session.get(ApiToken, token_id)
+            if not db_token:
+                return None
+
+            if db_token.revoked_at:
+                return None
+
+            if db_token.expires_at:
+                if db_token.expires_at < datetime.utcnow():
+                    return None
+
+            return db_token.user_id
 
     def delete_user(self, user_id: str):
         """Permanently deletes a user.
