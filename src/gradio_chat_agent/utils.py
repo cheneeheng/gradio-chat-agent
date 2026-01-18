@@ -5,11 +5,20 @@ such as diff computation and common transformations.
 """
 
 import base64
+import hashlib
 import mimetypes
 from typing import Any
 
 from gradio_chat_agent.models.enums import StateDiffOp
 from gradio_chat_agent.models.execution_result import StateDiffEntry
+
+
+def hash_password(password: str) -> str:
+    """Simple SHA256 hashing for demonstration purposes.
+
+    In production, use a dedicated library like bcrypt or argon2.
+    """
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def compute_state_diff(

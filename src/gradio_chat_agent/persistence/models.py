@@ -78,6 +78,9 @@ class User(Base):
     Attributes:
         id: Unique identifier for the user (username).
         password_hash: Hashed password for authentication.
+        full_name: The user's full display name.
+        email: The user's contact email.
+        organization_id: Link to the user's primary organization.
         created_at: Timestamp when the user was created.
     """
 
@@ -85,6 +88,9 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     password_hash: Mapped[str] = mapped_column(String)
+    full_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    organization_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )

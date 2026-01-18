@@ -542,16 +542,40 @@ class ExecutionEngine:
                             cost=action_cost,
                         )
 
-            # Role check (Simple implementation: assume 'admin' has all access)
-            # In a real system, we'd check action.permission against user_roles
-            if (
-                action.permission.risk == ActionRisk.HIGH
-                and "admin" not in user_roles
-            ):
+            # --- RBAC Role Enforcement ---
+            if "admin" in user_roles:
+                # Admins have full access
+                pass
+            elif "operator" in user_roles:
+                # Operators can execute low and medium risk actions
+                if action.permission.risk == ActionRisk.HIGH:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        "Insufficient permissions: 'operator' role cannot execute high-risk actions.",
+                        code="permission_denied",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
+                    )
+            elif "viewer" in user_roles or not user_roles:
+                # Viewers cannot execute any actions
                 return self._create_rejection(
                     project_id,
                     intent,
-                    "Insufficient permissions for high-risk action.",
+                    "Insufficient permissions: 'viewer' role cannot execute actions.",
+                    code="permission_denied",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+            else:
+                # Unknown role
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    f"Insufficient permissions: unknown roles {user_roles}.",
+                    code="permission_denied",
                     user_id=user_id,
                     execution_time_ms=get_duration(),
                     cost=action_cost,

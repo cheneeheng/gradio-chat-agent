@@ -13,6 +13,7 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from typing_extensions import Annotated
 
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
+from gradio_chat_agent.utils import hash_password
 
 
 app = typer.Typer(help="Gradio Chat Agent Management CLI")
@@ -30,11 +31,6 @@ def get_repo():
         "DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3"
     )
     return SQLStateRepository(db_url)
-
-
-def hash_password(password: str) -> str:
-    """Simple SHA256 hashing for the demonstration CLI."""
-    return hashlib.sha256(password.encode()).hexdigest()
 
 
 @project_app.command("create")

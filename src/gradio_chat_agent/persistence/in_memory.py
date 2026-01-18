@@ -44,18 +44,42 @@ class InMemoryStateRepository(StateRepository):
         """
         return list(self._projects.values())
 
-    def create_user(self, user_id: str, password_hash: str):
+    def create_user(
+        self,
+        user_id: str,
+        password_hash: str,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        organization_id: Optional[str] = None,
+    ):
         """Creates a new user.
 
         Args:
             user_id: The unique identifier for the user.
             password_hash: The hashed password.
+            full_name: Optional display name.
+            email: Optional contact email.
+            organization_id: Optional organization link.
         """
         self._users[user_id] = {
             "id": user_id,
             "password_hash": password_hash,
+            "full_name": full_name,
+            "email": email,
+            "organization_id": organization_id,
             "created_at": datetime.now(),
         }
+
+    def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a user by ID.
+
+        Args:
+            user_id: The unique identifier for the user.
+
+        Returns:
+            A dictionary containing user details if found, otherwise None.
+        """
+        return self._users.get(user_id)
 
     def update_user_password(self, user_id: str, password_hash: str):
         """Updates a user's password.

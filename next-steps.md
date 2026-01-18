@@ -120,9 +120,9 @@
 ## 11. Identity & Access (OIDC)
 
 - [ ] **OIDC Integration:** Replace the mock authentication with a real OIDC/OAuth2 provider integration (e.g., using `Authlib`).
-- [ ] **User Model:** Implement a formal `User` table in the `SQLStateRepository` to store credentials, profiles, and organization links.
-- [ ] **Default Admin Bootstrap:** Implement logic to create a default `admin/admin` account on startup, guarded by the `ALLOW_DEFAULT_ADMIN` environment variable.
-- [ ] **RBAC Role Enforcement:** Update the `ExecutionEngine` to strictly validate user roles against action risk: `viewer` (no execution), `operator` (low/medium risk only), `admin` (full access).
+- [x] **User Model:** Implement a formal `User` table in the `SQLStateRepository` to store credentials, profiles, and organization links.
+- [x] **Default Admin Bootstrap:** Implement logic to create a default `admin/admin` account on startup, guarded by the `ALLOW_DEFAULT_ADMIN` environment variable.
+- [x] **RBAC Role Enforcement:** Update the `ExecutionEngine` to strictly validate user roles against action risk: `viewer` (no execution), `operator` (low/medium risk only), `admin` (full access).
 - [ ] **RBAC Mapping:** Implement a dynamic mapping system to resolve Gradio session users to specific project roles (viewer, operator, admin).
 - [ ] **Session Management:** Secure the API endpoints with proper Bearer token validation linked to the OIDC provider.
 

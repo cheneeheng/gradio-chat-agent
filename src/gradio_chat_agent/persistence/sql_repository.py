@@ -640,17 +640,55 @@ class SQLStateRepository(StateRepository):
                 for row in rows
             ]
 
-    def create_user(self, user_id: str, password_hash: str):
+    def create_user(
+        self,
+        user_id: str,
+        password_hash: str,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        organization_id: Optional[str] = None,
+    ):
         """Creates a new user.
 
         Args:
             user_id: The unique identifier for the user.
             password_hash: The hashed password.
+            full_name: Optional display name.
+            email: Optional contact email.
+            organization_id: Optional organization link.
         """
         with self.SessionLocal() as session:
-            user = User(id=user_id, password_hash=password_hash)
+            user = User(
+                id=user_id,
+                password_hash=password_hash,
+                full_name=full_name,
+                email=email,
+                organization_id=organization_id,
+            )
             session.add(user)
             session.commit()
+
+    def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a user by ID.
+
+        Args:
+            user_id: The unique identifier for the user.
+
+        Returns:
+            A dictionary containing user details if found, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if not user:
+                return None
+            return {
+                "id": user.id,
+                "password_hash": user.password_hash,
+                "full_name": user.full_name,
+                "email": user.email,
+                "organization_id": user.organization_id,
+                "created_at": user.created_at,
+            }
 
     def update_user_password(self, user_id: str, password_hash: str):
         """Updates a user's password.

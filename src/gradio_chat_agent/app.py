@@ -44,8 +44,23 @@ from gradio_chat_agent.registry.system_actions import (
     remember_handler,
 )
 from gradio_chat_agent.ui.layout import create_ui
+from gradio_chat_agent.utils import hash_password
 
 logger = get_logger(__name__)
+
+
+def bootstrap_admin(repository: SQLStateRepository):
+    """Creates a default admin user if ALLOW_DEFAULT_ADMIN is enabled."""
+    allow_default = os.environ.get("ALLOW_DEFAULT_ADMIN", "True").lower() == "true"
+    if not allow_default:
+        return
+
+    admin_user = repository.get_user("admin")
+    if not admin_user:
+        logger.info("Bootstrapping default admin user...")
+        repository.create_user("admin", hash_password("admin"))
+        # Also add to default project as admin
+        repository.add_project_member("default_project", "admin", "admin")
 
 
 def main():
@@ -82,6 +97,9 @@ def main():
     )
     logger.info(f"Connecting to database: {db_url}")
     repository = SQLStateRepository(db_url)
+
+    # 2.5 Bootstrap Admin
+    bootstrap_admin(repository)
 
     # 3. Setup Engine
     engine = ExecutionEngine(registry=registry, repository=repository)
