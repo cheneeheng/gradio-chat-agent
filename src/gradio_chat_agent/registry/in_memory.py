@@ -38,10 +38,33 @@ class InMemoryRegistry(Registry):
         self._actions[action.action_id] = action
         self._handlers[action.action_id] = handler
 
+    def _get_latest_version(self, base_id: str, store: dict) -> Optional[str]:
+        """Finds the latest version of a component or action.
+
+        Args:
+            base_id: The identifier without the version suffix.
+            store: The dictionary to search in (_components or _actions).
+
+        Returns:
+            The full identifier of the latest version, or None if not found.
+        """
+        if base_id in store:
+            return base_id
+
+        # Look for matches with @ suffix
+        matches = [k for k in store.keys() if k.startswith(f"{base_id}@")]
+        if not matches:
+            return None
+
+        # Sort matches and pick the last one (e.g., v2 > v1)
+        return sorted(matches)[-1]
+
     def get_component(
         self, component_id: str
     ) -> Optional[ComponentDeclaration]:
         """Retrieves a component declaration by its ID.
+
+        If no version is specified, returns the latest version.
 
         Args:
             component_id: The unique dot-notation identifier of the component.
@@ -49,7 +72,11 @@ class InMemoryRegistry(Registry):
         Returns:
             The component declaration if found, otherwise None.
         """
-        return self._components.get(component_id)
+        if "@" in component_id:
+            return self._components.get(component_id)
+
+        latest_id = self._get_latest_version(component_id, self._components)
+        return self._components.get(latest_id) if latest_id else None
 
     def list_components(self) -> list[ComponentDeclaration]:
         """Lists all registered components in the registry.
@@ -62,13 +89,19 @@ class InMemoryRegistry(Registry):
     def get_action(self, action_id: str) -> Optional[ActionDeclaration]:
         """Retrieves an action declaration by its ID.
 
+        If no version is specified, returns the latest version.
+
         Args:
             action_id: The unique dot-notation identifier of the action.
 
         Returns:
             The action declaration if found, otherwise None.
         """
-        return self._actions.get(action_id)
+        if "@" in action_id:
+            return self._actions.get(action_id)
+
+        latest_id = self._get_latest_version(action_id, self._actions)
+        return self._actions.get(latest_id) if latest_id else None
 
     def list_actions(self) -> list[ActionDeclaration]:
         """Lists all registered actions in the registry.
@@ -81,10 +114,16 @@ class InMemoryRegistry(Registry):
     def get_handler(self, action_id: str) -> Optional[Callable]:
         """Retrieves the executable handler function for an action.
 
+        If no version is specified, returns the handler for the latest version.
+
         Args:
             action_id: The unique identifier of the action.
 
         Returns:
             The callable handler function if found, otherwise None.
         """
-        return self._handlers.get(action_id)
+        if "@" in action_id:
+            return self._handlers.get(action_id)
+
+        latest_id = self._get_latest_version(action_id, self._actions)
+        return self._handlers.get(latest_id) if latest_id else None

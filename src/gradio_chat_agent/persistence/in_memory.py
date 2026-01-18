@@ -263,6 +263,19 @@ class InMemoryStateRepository(StateRepository):
             self._executions[project_id] = []
         self._executions[project_id].append(result)
 
+    def save_execution_and_snapshot(
+        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+    ):
+        """Persists an execution result and a new state snapshot.
+
+        Args:
+            project_id: The ID of the project.
+            result: The execution result object.
+            snapshot: The new state snapshot object.
+        """
+        self.save_snapshot(project_id, snapshot)
+        self.save_execution(project_id, result)
+
     def get_execution_history(
         self, project_id: str, limit: int = 100
     ) -> list[ExecutionResult]:

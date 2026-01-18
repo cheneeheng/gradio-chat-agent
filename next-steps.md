@@ -65,7 +65,7 @@
 
 ## 6. Component Ecosystem
 
-- [ ] **Versioning:** Update the Registry to support versioned components/actions (e.g., `demo.counter@v1`).
+- [x] **Versioning:** Update the Registry to support versioned components/actions (e.g., `demo.counter@v1`).
 - [x] **Standard Library Expansion:** Expand the `std` namespace with common components (`std.text_input`, `std.slider`, `std.status_indicator`) and layouts to provide a consistent base for all projects.
 - [ ] **Web Automation Suite:** Implement a high-level browser component suite (`browser.click`, `browser.type`, `browser.scroll`) based on Playwright.
 - [x] **Standard Model/Inference Suite:** Implement the `model.selector` and `inference.run` examples from the documentation as a reusable package.
@@ -131,11 +131,11 @@
 - [x] **Production Dockerfile:** Create a root `Dockerfile` using `uv` and multi-stage builds, following the structure in the deployment guide.
 - [x] **Health Check Endpoint:** Implement a dedicated FastAPI-based health endpoint (e.g., `/health`) to verify database and engine readiness.
 - [ ] **Alembic Migrations:** Set up Alembic to manage database schema changes instead of relying on `metadata.create_all`.
-- [ ] **Gunicorn/Uvicorn Wrapper:** Update the entry point to support production-grade ASGI servers with multiple worker processes.
+- [x] **Gunicorn/Uvicorn Wrapper:** Update the entry point to support production-grade ASGI servers with multiple worker processes.
 
 ## 13. Infrastructure & Scaling
 
-- [ ] **Transactional Atomicity:** Update the `ExecutionEngine` and `SQLStateRepository` to ensure that the creation of a new `StateSnapshot` and the recording of the `ExecutionResult` occur within a single database transaction.
+- [x] **Transactional Atomicity:** Update the `ExecutionEngine` and `SQLStateRepository` to ensure that the creation of a new `StateSnapshot` and the recording of the `ExecutionResult` occur within a single database transaction. (Infrastructure & Scaling)
 - [x] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
 - [ ] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
 - [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).

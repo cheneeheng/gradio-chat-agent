@@ -65,7 +65,7 @@ class ChatIntent(BaseModel):
     )
     action_id: Optional[str] = Field(
         default=None,
-        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
+        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*(@[a-z0-9]+)?$",
         description="The ID of the action to execute (if type is ACTION_CALL).",
     )
     execution_mode: Optional[ExecutionMode] = Field(

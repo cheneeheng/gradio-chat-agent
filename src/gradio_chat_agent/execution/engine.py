@@ -31,14 +31,13 @@ from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.observability.metrics import (
-    ACTIVE_PROJECTS,
     BUDGET_CONSUMPTION_TOTAL,
     ENGINE_EXECUTION_DURATION_SECONDS,
     ENGINE_EXECUTION_TOTAL,
 )
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
-from gradio_chat_agent.utils import compute_state_diff, compute_checksum
+from gradio_chat_agent.utils import compute_checksum, compute_state_diff
 
 
 logger = get_logger(__name__)
@@ -85,7 +84,9 @@ class ExecutionEngine:
         self.config = config or EngineConfig()
         self.project_locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
-        self.post_execution_hooks: list[Callable[[str, ExecutionResult], None]] = []
+        self.post_execution_hooks: list[
+            Callable[[str, ExecutionResult], None]
+        ] = []
 
     def add_post_execution_hook(
         self, hook: Callable[[str, ExecutionResult], None]
@@ -467,10 +468,12 @@ class ExecutionEngine:
                     current_snapshot = StateSnapshot(
                         snapshot_id=str(uuid.uuid4()), components={}
                     )
-                
+
                 # --- State Integrity Verification ---
                 if current_snapshot.checksum:
-                    actual_checksum = compute_checksum(current_snapshot.components)
+                    actual_checksum = compute_checksum(
+                        current_snapshot.components
+                    )
                     if actual_checksum != current_snapshot.checksum:
                         return self._create_failure(
                             project_id,
@@ -795,9 +798,9 @@ class ExecutionEngine:
                 project_id=project_id,
             ).inc()
             if not simulate:
-                BUDGET_CONSUMPTION_TOTAL.labels(
-                    project_id=project_id
-                ).inc(action_cost)
+                BUDGET_CONSUMPTION_TOTAL.labels(project_id=project_id).inc(
+                    action_cost
+                )
 
             logger.info(
                 f"Execution successful: {intent.action_id}",
@@ -823,11 +826,12 @@ class ExecutionEngine:
             new_snapshot = StateSnapshot(
                 snapshot_id=new_snapshot_id,
                 components=new_components,
-                checksum=compute_checksum(new_components)
+                checksum=compute_checksum(new_components),
             )
 
-            self.repository.save_snapshot(project_id, new_snapshot)
-            self.repository.save_execution(project_id, result)
+            self.repository.save_execution_and_snapshot(
+                project_id, result, new_snapshot
+            )
 
             # 10. Dispatch Side Effects
             self._dispatch_post_execution(project_id, result)
@@ -879,7 +883,7 @@ class ExecutionEngine:
             new_snapshot = StateSnapshot(
                 snapshot_id=new_snapshot_id,
                 components=new_components,
-                checksum=compute_checksum(new_components)
+                checksum=compute_checksum(new_components),
             )
 
             diffs = compute_state_diff(
@@ -896,8 +900,9 @@ class ExecutionEngine:
             )
 
             # 3. Persistence
-            self.repository.save_snapshot(project_id, new_snapshot)
-            self.repository.save_execution(project_id, result)
+            self.repository.save_execution_and_snapshot(
+                project_id, result, new_snapshot
+            )
 
             # 4. Dispatch Side Effects
             self._dispatch_post_execution(project_id, result)
@@ -924,7 +929,9 @@ class ExecutionEngine:
             The reconstructed components dictionary.
         """
         # 1. Fetch all successful executions for this project, ordered by time
-        history = self.repository.get_execution_history(project_id, limit=10000)
+        history = self.repository.get_execution_history(
+            project_id, limit=10000
+        )
         # Ordered by timestamp desc in repo, so reverse it
         history = list(reversed(history))
 
@@ -947,7 +954,7 @@ class ExecutionEngine:
                 # In a real system, this would be a recursive path update.
                 if len(path_parts) == 1:
                     if diff.op == "add" or diff.op == "replace":
-                        reconstructed_state[comp_id] = diff.value
+                        reconstructed_state[comp_id] = diff.value or {}
                     elif diff.op == "remove":
                         reconstructed_state.pop(comp_id, None)
                 elif len(path_parts) == 2:
@@ -964,11 +971,13 @@ class ExecutionEngine:
                 entry_ts = entry.timestamp
                 if entry_ts.tzinfo is None:
                     from datetime import timezone
+
                     entry_ts = entry_ts.replace(tzinfo=timezone.utc)
-                
+
                 target_ts = target_timestamp
                 if target_ts.tzinfo is None:
                     from datetime import timezone
+
                     target_ts = target_ts.replace(tzinfo=timezone.utc)
 
                 if entry_ts > target_ts:

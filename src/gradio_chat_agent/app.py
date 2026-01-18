@@ -38,15 +38,15 @@ from gradio_chat_agent.registry.in_memory import InMemoryRegistry
 
 # Import components/actions
 from gradio_chat_agent.registry.std_lib import (
-    text_input_component,
-    text_input_set_action,
-    text_input_set_handler,
     slider_component,
     slider_set_action,
     slider_set_handler,
     status_indicator_component,
     status_indicator_update_action,
     status_indicator_update_handler,
+    text_input_component,
+    text_input_set_action,
+    text_input_set_handler,
 )
 from gradio_chat_agent.registry.system_actions import (
     forget_action,
@@ -78,17 +78,11 @@ def bootstrap_admin(repository: SQLStateRepository):
         repository.add_project_member("default_project", "admin", "admin")
 
 
-def main():
-    """Initializes and launches the Gradio Chat Agent application.
+def create_app() -> FastAPI:
+    """Factory function to create and configure the FastAPI application.
 
-    This function sets up the following:
-    1. The Action and Component registries with system and demo actions.
-    2. The SQL persistence layer (SQLite by default).
-    3. The authoritative Execution Engine.
-    4. The OpenAI-based Chat Agent adapter.
-    5. The Gradio UI layout.
-
-    It then launches the server on port 7860.
+    This is used by production ASGI servers like Gunicorn/Uvicorn with
+    multiple worker processes.
     """
     setup_logging()
 
@@ -129,12 +123,7 @@ def main():
     # 3. Setup Engine
     engine = ExecutionEngine(registry=registry, repository=repository)
 
-    # 3.5 Start Scheduler
-    scheduler = SchedulerWorker(engine)
-    scheduler.start()
-
     # 4. Setup Agent
-    # Note: Requires OPENAI_API_KEY env var
     adapter = OpenAIAgentAdapter()
 
     # 5. Build UI
@@ -172,7 +161,26 @@ def main():
             media_type="application/json",
         )
 
-    app = gr.mount_gradio_app(app, demo, path="/")
+    # Attach scheduler to app state for lifecycle management
+    # Note: In a multi-worker environment, you might want to run the
+    # scheduler in a single dedicated process instead.
+    scheduler = SchedulerWorker(engine)
+    app.state.scheduler = scheduler
+
+    @app.on_event("startup")
+    def startup_event():
+        app.state.scheduler.start()
+
+    @app.on_event("shutdown")
+    def shutdown_event():
+        app.state.scheduler.stop()
+
+    return gr.mount_gradio_app(app, demo, path="/")
+
+
+def main():
+    """Initializes and launches the Gradio Chat Agent application locally."""
+    app = create_app()
 
     # 7. Launch
     server_name = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0")
@@ -182,10 +190,7 @@ def main():
         f"Starting Gradio Chat Agent with FastAPI on {server_name}:{server_port}..."
     )
 
-    try:
-        uvicorn.run(app, host=server_name, port=server_port)
-    finally:
-        scheduler.stop()
+    uvicorn.run(app, host=server_name, port=server_port)
 
 
 if __name__ == "__main__":

@@ -161,6 +161,60 @@ class SQLStateRepository(StateRepository):
             session.add(db_exec)
             session.commit()
 
+    def save_execution_and_snapshot(
+        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+    ):
+        """Persists an execution result and a new state snapshot atomically.
+
+        Args:
+            project_id: The ID of the project.
+            result: The execution result object.
+            snapshot: The new state snapshot object.
+        """
+        with self.SessionLocal() as session:
+            # 1. Ensure project exists
+            project = session.get(Project, project_id)
+            if not project:
+                session.add(Project(id=project_id, name="Default Project"))
+
+            # 2. Save Snapshot
+            db_snapshot = Snapshot(
+                id=snapshot.snapshot_id,
+                project_id=project_id,
+                timestamp=snapshot.timestamp,
+                components=snapshot.components,
+            )
+            session.add(db_snapshot)
+
+            # 3. Save Execution
+            state_diff_json = [
+                d.model_dump(mode="json") for d in result.state_diff
+            ]
+            error_json = (
+                result.error.model_dump(mode="json") if result.error else None
+            )
+
+            db_exec = Execution(
+                request_id=result.request_id,
+                project_id=project_id,
+                user_id=result.user_id,
+                action_id=result.action_id,
+                status=result.status,
+                timestamp=result.timestamp,
+                duration_ms=result.execution_time_ms,
+                cost=result.cost,
+                message=result.message,
+                state_snapshot_id=result.state_snapshot_id,
+                state_diff=state_diff_json,
+                intent=result.intent,
+                error=error_json,
+                metadata_=result.metadata,
+            )
+            session.add(db_exec)
+
+            # 4. Commit both in a single transaction
+            session.commit()
+
     def get_execution_history(
         self, project_id: str, limit: int = 100
     ) -> list[ExecutionResult]:

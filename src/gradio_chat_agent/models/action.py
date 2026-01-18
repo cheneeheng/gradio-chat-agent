@@ -85,8 +85,8 @@ class ActionDeclaration(BaseModel):
 
     action_id: str = Field(
         ...,
-        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
-        description="Unique, dot-notation identifier (e.g., 'demo.counter.set').",
+        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*(@[a-z0-9]+)?$",
+        description="Unique, dot-notation identifier (e.g., 'demo.counter.set@v1').",
     )
     title: str = Field(..., description="Short human-readable name.")
     description: str = Field(

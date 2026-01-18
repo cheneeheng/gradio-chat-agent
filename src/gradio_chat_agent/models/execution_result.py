@@ -72,11 +72,12 @@ class ExecutionResult(BaseModel):
         ..., description="The ID of the intent that triggered this execution."
     )
     user_id: Optional[str] = Field(
-        default=None, description="The ID of the user who triggered this execution."
+        default=None,
+        description="The ID of the user who triggered this execution.",
     )
     action_id: str = Field(
         ...,
-        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
+        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*(@[a-z0-9]+)?$",
         description="The ID of the action attempted.",
     )
     status: ExecutionStatus = Field(
@@ -87,7 +88,8 @@ class ExecutionResult(BaseModel):
         description="When the execution completed.",
     )
     execution_time_ms: Optional[float] = Field(
-        default=None, description="The time taken to execute the action in milliseconds."
+        default=None,
+        description="The time taken to execute the action in milliseconds.",
     )
     cost: Optional[float] = Field(
         default=None, description="The cost of the execution."

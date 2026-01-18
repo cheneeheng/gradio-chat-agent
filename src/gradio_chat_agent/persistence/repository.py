@@ -61,6 +61,19 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def save_execution_and_snapshot(
+        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+    ):
+        """Persists an execution result and a new state snapshot atomically.
+
+        Args:
+            project_id: The ID of the project.
+            result: The execution result object.
+            snapshot: The new state snapshot object.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_execution_history(
         self, project_id: str, limit: int = 100
     ) -> list[ExecutionResult]:

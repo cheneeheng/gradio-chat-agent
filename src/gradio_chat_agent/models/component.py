@@ -59,8 +59,8 @@ class ComponentDeclaration(BaseModel):
 
     component_id: str = Field(
         ...,
-        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*$",
-        description="Unique, dot-notation identifier (e.g., 'demo.counter').",
+        pattern=r"^[a-z0-9]+(\.[a-z0-9]+)*(@[a-z0-9]+)?$",
+        description="Unique, dot-notation identifier (e.g., 'demo.counter@v1').",
     )
     title: str = Field(..., description="Short human-readable name.")
     description: str = Field(
