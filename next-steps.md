@@ -61,7 +61,7 @@
   - [x] **Hook System:** Implement a `post_execution` hook in the `ExecutionEngine` to trigger external actions (e.g., API calls) only after state is successfully committed.
   - [x] **Replay Safety:** Implement a global `execution_context` or mode flag to ensure side effects are strictly suppressed during "Replay" or "Simulation" paths.
   - **Async Observers:** Design a background observer pattern that polls the audit log for successful mutations to trigger long-running or unreliable external tasks asynchronously.
-- [ ] **Task Retries:** Add retry logic and error handling for failed scheduled tasks and webhook triggers.
+- [x] **Task Retries:** Add retry logic and error handling for failed scheduled tasks and webhook triggers.
 
 ## 6. Component Ecosystem
 
@@ -103,10 +103,10 @@
 
 ## 9. Platform Management
 
-- [ ] **Global User Registry:** Implement API endpoints for system administrators to provision and manage users globally, independent of project membership.
-- [ ] **Authority Separation:** Implement platform-wide RBAC logic to distinguish between System Admins (global access) and Project Admins (scoped access).
-- [ ] **Policy Templating:** Implement a "System Template" system to automatically apply default rate limits and budgets when a new project is created via `api_manage_project`.
-- [ ] **Purge Confirmation Gate:** Add a required confirmation flag and high-risk validation logic to the `PURGE` operation in `ApiEndpoints` to prevent accidental global data loss.
+- [x] **Global User Registry:** Implement API endpoints for system administrators to provision and manage users globally, independent of project membership.
+- [x] **Authority Separation:** Implement platform-wide RBAC logic to distinguish between System Admins (global access) and Project Admins (scoped access).
+- [x] **Policy Templating:** Implement a "System Template" system to automatically apply default rate limits and budgets when a new project is created via `api_manage_project`.
+- [x] **Purge Confirmation Gate:** Add a required confirmation flag and high-risk validation logic to the `PURGE` operation in `ApiEndpoints` to prevent accidental global data loss.
 - [ ] **Global Observability (Rollups):** Implement cross-project analytics (`api_org_rollup`) allowing System Admins to view aggregate usage, costs, and failure rates across the entire platform.
 
 ## 10. Secrets Management & Security

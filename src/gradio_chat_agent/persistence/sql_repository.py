@@ -596,7 +596,7 @@ class SQLStateRepository(StateRepository):
             A list of schedule dictionaries.
         """
         with self.SessionLocal() as session:
-            stmt = select(Schedule).where(Schedule.enabled == True)
+            stmt = select(Schedule).where(Schedule.enabled)
             rows = session.execute(stmt).scalars().all()
             return [
                 {
@@ -636,7 +636,11 @@ class SQLStateRepository(StateRepository):
             stmt = select(Project)
             rows = session.execute(stmt).scalars().all()
             return [
-                {"id": row.id, "name": row.name, "archived": row.archived_at is not None}
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "archived": row.archived_at is not None,
+                }
                 for row in rows
             ]
 
@@ -667,6 +671,45 @@ class SQLStateRepository(StateRepository):
             )
             session.add(user)
             session.commit()
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Lists all users in the system.
+
+        Returns:
+            A list of user dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(User)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "password_hash": row.password_hash,
+                    "full_name": row.full_name,
+                    "email": row.email,
+                    "organization_id": row.organization_id,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+
+    def delete_user(self, user_id: str):
+        """Permanently deletes a user.
+
+        Args:
+            user_id: The unique identifier for the user.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if user:
+                # Also clean up memberships (SQLAlchemy should handle this if relationship configured with cascade,
+                # but let's be explicit if not sure or just delete user if DB enforces FK)
+                stmt = delete(ProjectMembership).where(
+                    ProjectMembership.user_id == user_id
+                )
+                session.execute(stmt)
+                session.delete(user)
+                session.commit()
 
     def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a user by ID.
@@ -703,7 +746,9 @@ class SQLStateRepository(StateRepository):
                 user.password_hash = password_hash
                 session.commit()
 
-    def list_webhooks(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_webhooks(
+        self, project_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
         """Lists all webhooks.
 
         Args:

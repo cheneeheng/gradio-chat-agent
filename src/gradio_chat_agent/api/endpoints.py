@@ -3,9 +3,10 @@
 This module defines the logic for the headless API endpoints exposed via Gradio.
 """
 
-import hmac
 import hashlib
+import hmac
 import uuid
+from datetime import datetime
 from typing import Any
 
 from gradio_chat_agent.execution.engine import ExecutionEngine
@@ -258,6 +259,7 @@ class ApiEndpoints:
 
         # 2. Verify Signature using HMAC-SHA256
         import json
+
         payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
         secret_bytes = webhook["secret"].encode("utf-8")
         expected_signature = hmac.new(
@@ -270,9 +272,10 @@ class ApiEndpoints:
             )
 
         # 3. Template Rendering (Jinja2)
-        from jinja2 import Environment, BaseLoader
+        from jinja2 import BaseLoader, Environment
+
         env = Environment(loader=BaseLoader())
-        
+
         inputs = {}
         template_dict = webhook.get("inputs_template")
 
@@ -385,11 +388,17 @@ class ApiEndpoints:
             data=[res.model_dump(mode="json") for res in history]
         ).model_dump(mode="json")
 
+    def _is_system_admin(self, user_id: str | None) -> bool:
+        """Checks if the user has platform-wide management authority."""
+        return user_id == "admin"
+
     def manage_project(
         self,
         op: ProjectOp,
         name: str | None = None,
         project_id: str | None = None,
+        user_id: str | None = None,
+        confirmed: bool = False,
     ) -> dict[str, Any]:
         """Manages the project lifecycle.
 
@@ -397,21 +406,38 @@ class ApiEndpoints:
             op: Operation (create, archive, purge).
             name: Required for create.
             project_id: Required for archive/purge.
+            user_id: ID of the user performing the operation.
+            confirmed: Must be True for destructive operations like PURGE.
 
         Returns:
             Result wrapped in ApiResponse.
         """
+        if not self._is_system_admin(user_id):
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
         if op == ProjectOp.CREATE:
             if not name:
                 return ApiResponse(
                     code=1, message="Name required for create"
                 ).model_dump(mode="json")
-            # Generate ID if not provided (though param says project_id optional, usually generated)
+            # Generate ID if not provided
             pid = project_id or str(uuid.uuid4())
             self.engine.repository.create_project(pid, name)
+
+            # --- Policy Templating: Apply default limits ---
+            default_policy = {
+                "limits": {
+                    "rate": {"per_minute": 10, "per_hour": 200},
+                    "budget": {"daily": 500.0},
+                }
+            }
+            self.engine.repository.set_project_limits(pid, default_policy)
+
             return ApiResponse(
-                message="Project created",
-                data={"project_id": pid},
+                message="Project created with default policy",
+                data={"project_id": pid, "policy": default_policy},
             ).model_dump(mode="json")
 
         elif op == ProjectOp.ARCHIVE:
@@ -429,6 +455,14 @@ class ApiEndpoints:
                 return ApiResponse(
                     code=1, message="Project ID required for purge"
                 ).model_dump(mode="json")
+
+            # --- Purge Confirmation Gate ---
+            if not confirmed:
+                return ApiResponse(
+                    code=1,
+                    message="Confirmation required for destructive PURGE operation. Please set confirmed=true.",
+                ).model_dump(mode="json")
+
             self.engine.repository.purge_project(project_id)
             return ApiResponse(message="Project purged").model_dump(
                 mode="json"
@@ -609,3 +643,55 @@ class ApiEndpoints:
         """
         self.engine.repository.set_project_limits(project_id, policy)
         return ApiResponse(message="Policy updated").model_dump(mode="json")
+
+    def list_users(self, user_id: str | None = None) -> dict[str, Any]:
+        """Lists all users in the system.
+
+        Args:
+            user_id: ID of the user performing the operation.
+
+        Returns:
+            List of users wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id):
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
+        users = self.engine.repository.list_users()
+        return ApiResponse(
+            data=[
+                {
+                    "id": u["id"],
+                    "full_name": u.get("full_name"),
+                    "email": u.get("email"),
+                    "organization_id": u.get("organization_id"),
+                    "created_at": u["created_at"].isoformat()
+                    if isinstance(u["created_at"], datetime)
+                    else u["created_at"],
+                }
+                for u in users
+            ]
+        ).model_dump(mode="json")
+
+    def delete_user(
+        self, target_user_id: str, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Deletes a user from the system.
+
+        Args:
+            target_user_id: The ID of the user to delete.
+            user_id: ID of the user performing the operation.
+
+        Returns:
+            Result wrapped in ApiResponse.
+        """
+        if not self._is_system_admin(user_id):
+            return ApiResponse(
+                code=1, message="Permission denied: System Admin required"
+            ).model_dump(mode="json")
+
+        self.engine.repository.delete_user(target_user_id)
+        return ApiResponse(
+            message=f"User {target_user_id} deleted"
+        ).model_dump(mode="json")

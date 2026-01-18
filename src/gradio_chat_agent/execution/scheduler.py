@@ -1,8 +1,8 @@
 """Background worker for executing scheduled tasks."""
 
-import uuid
 import threading
 import time
+import uuid
 from typing import Any, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -12,6 +12,7 @@ from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.observability.logging import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -60,7 +61,7 @@ class SchedulerWorker:
                 self._sync_schedules()
             except Exception as e:
                 logger.exception(f"Error syncing schedules: {str(e)}")
-            
+
             # Wait for poll interval or stop event
             self._stop_event.wait(self.poll_interval)
 
@@ -85,10 +86,12 @@ class SchedulerWorker:
                     CronTrigger.from_crontab(s["cron"]),
                     id=job_id,
                     args=[s],
-                    replace_existing=True
+                    replace_existing=True,
                 )
                 self._active_schedules.add(job_id)
-                logger.info(f"Added schedule job: {job_id} (Cron: {s['cron']})")
+                logger.info(
+                    f"Added schedule job: {job_id} (Cron: {s['cron']})"
+                )
 
     def _execute_scheduled_action(self, schedule_config: dict[str, Any]):
         """Callback executed by APScheduler."""
@@ -96,7 +99,9 @@ class SchedulerWorker:
         action_id = schedule_config["action_id"]
         inputs = schedule_config.get("inputs", {})
 
-        logger.info(f"Triggering scheduled action: {action_id} for project {project_id}")
+        logger.info(
+            f"Triggering scheduled action: {action_id} for project {project_id}"
+        )
 
         intent = ChatIntent(
             type=IntentType.ACTION_CALL,
@@ -104,22 +109,44 @@ class SchedulerWorker:
             action_id=action_id,
             inputs=inputs,
             execution_mode=ExecutionMode.AUTONOMOUS,
-            confirmed=True, # System triggers are implicitly confirmed
-            trace={"trigger": "schedule", "schedule_id": schedule_config["id"]}
+            confirmed=True,  # System triggers are implicitly confirmed
+            trace={
+                "trigger": "schedule",
+                "schedule_id": schedule_config["id"],
+            },
         )
 
-        try:
-            # Execute as a "System" user with Admin privileges
-            result = self.engine.execute_intent(
-                project_id=project_id,
-                intent=intent,
-                user_roles=["admin"],
-                user_id="system_scheduler"
-            )
-            
-            if result.status == "success":
-                logger.info(f"Scheduled action {action_id} completed successfully: {result.message}")
-            else:
-                logger.warning(f"Scheduled action {action_id} failed/rejected: {result.message}")
-        except Exception as e:
-            logger.exception(f"Unexpected error executing scheduled action {action_id}: {str(e)}")
+        # --- Task Retries logic ---
+        max_retries = 3
+        retry_delay = 1  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                # Execute as a "System" user with Admin privileges
+                result = self.engine.execute_intent(
+                    project_id=project_id,
+                    intent=intent,
+                    user_roles=["admin"],
+                    user_id="system_scheduler",
+                )
+
+                if result.status == "success":
+                    logger.info(
+                        f"Scheduled action {action_id} completed successfully: {result.message}"
+                    )
+                    return
+                else:
+                    logger.warning(
+                        f"Scheduled action {action_id} failed/rejected (Attempt {attempt + 1}/{max_retries}): {result.message}"  # noqa: E501
+                    )
+            except Exception as e:
+                logger.exception(
+                    f"Unexpected error executing scheduled action {action_id} (Attempt {attempt + 1}/{max_retries}): {str(e)}"  # noqa: E501
+                )
+
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+
+        logger.error(
+            f"Scheduled action {action_id} failed after {max_retries} attempts."
+        )

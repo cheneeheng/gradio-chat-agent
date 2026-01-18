@@ -768,9 +768,10 @@ class ExecutionEngine:
             )
 
             # Metrics
-            ENGINE_EXECUTION_DURATION_SECONDS.labels(
-                action_id=intent.action_id
-            ).observe(result.execution_time_ms / 1000.0)
+            if result.execution_time_ms is not None:
+                ENGINE_EXECUTION_DURATION_SECONDS.labels(
+                    action_id=intent.action_id
+                ).observe(result.execution_time_ms / 1000.0)
             ENGINE_EXECUTION_TOTAL.labels(
                 status="success",
                 action_id=intent.action_id,

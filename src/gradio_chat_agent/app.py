@@ -12,6 +12,7 @@ import gradio as gr
 import uvicorn
 from fastapi import FastAPI, Response
 
+
 # Ensure src is in path
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -46,12 +47,15 @@ from gradio_chat_agent.registry.system_actions import (
 from gradio_chat_agent.ui.layout import create_ui
 from gradio_chat_agent.utils import hash_password
 
+
 logger = get_logger(__name__)
 
 
 def bootstrap_admin(repository: SQLStateRepository):
     """Creates a default admin user if ALLOW_DEFAULT_ADMIN is enabled."""
-    allow_default = os.environ.get("ALLOW_DEFAULT_ADMIN", "True").lower() == "true"
+    allow_default = (
+        os.environ.get("ALLOW_DEFAULT_ADMIN", "True").lower() == "true"
+    )
     if not allow_default:
         return
 
@@ -141,7 +145,9 @@ def main():
     server_name = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0")
     server_port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
 
-    logger.info(f"Starting Gradio Chat Agent with FastAPI on {server_name}:{server_port}...")
+    logger.info(
+        f"Starting Gradio Chat Agent with FastAPI on {server_name}:{server_port}..."
+    )
 
     try:
         uvicorn.run(app, host=server_name, port=server_port)

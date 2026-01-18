@@ -24,10 +24,18 @@ from gradio_chat_agent.utils import encode_media
 DEFAULT_PROJECT_ID = "default_project"
 DEFAULT_USER_ID = "admin_user"
 
-STATUS_SUCCESS_HTML = '<div style="color: green; font-size: 1.2rem;">✅ Success</div>'
-STATUS_PENDING_HTML = '<div style="color: orange; font-size: 1.2rem;">⏳ Pending Approval</div>'
-STATUS_FAILED_HTML = '<div style="color: red; font-size: 1.2rem;">❌ Failed/Rejected</div>'
-STATUS_READY_HTML = '<div style="color: gray; font-size: 1.2rem;">🟢 Ready</div>'
+STATUS_SUCCESS_HTML = (
+    '<div style="color: green; font-size: 1.2rem;">✅ Success</div>'
+)
+STATUS_PENDING_HTML = (
+    '<div style="color: orange; font-size: 1.2rem;">⏳ Pending Approval</div>'
+)
+STATUS_FAILED_HTML = (
+    '<div style="color: red; font-size: 1.2rem;">❌ Failed/Rejected</div>'
+)
+STATUS_READY_HTML = (
+    '<div style="color: gray; font-size: 1.2rem;">🟢 Ready</div>'
+)
 
 CUSTOM_CSS = """
 /* Enhance Chatbot Bubbles */
@@ -98,8 +106,8 @@ class UIController:
             reg_info,
             facts_data,
             members_data,
-            {}, # last_intent
-            {}, # last_result
+            {},  # last_intent
+            {},  # last_result
             STATUS_READY_HTML,
         )
 
@@ -206,8 +214,8 @@ class UIController:
                 gr.update(),
                 gr.update(visible=False),
                 None,
-                {}, # last_intent
-                {}, # last_result
+                {},  # last_intent
+                {},  # last_result
                 STATUS_FAILED_HTML,
             )
 
@@ -234,7 +242,7 @@ class UIController:
                 gr.update(visible=True),
                 result,
                 last_intent_json,
-                {}, # last_result
+                {},  # last_result
                 STATUS_PENDING_HTML,
             )
 
@@ -253,7 +261,7 @@ class UIController:
                     gr.update(visible=False),
                     None,
                     last_intent_json,
-                    {}, # last_result
+                    {},  # last_result
                     STATUS_READY_HTML,
                 )
 
@@ -344,8 +352,8 @@ class UIController:
             "No plan pending.",
             gr.update(visible=False),
             None,
-            {}, # last_intent
-            {}, # last_result
+            {},  # last_intent
+            {},  # last_result
             STATUS_READY_HTML,
         )
 
@@ -459,7 +467,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 )
                 user_info = gr.Markdown(f"**User:** {DEFAULT_USER_ID} (Admin)")
 
-                status_indicator = gr.HTML(STATUS_READY_HTML, label="System Status")
+                status_indicator = gr.HTML(
+                    STATUS_READY_HTML, label="System Status"
+                )
 
                 reset_btn = gr.Button(
                     "Reset State (Debug)", variant="secondary"

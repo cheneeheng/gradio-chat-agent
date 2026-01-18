@@ -60,6 +60,7 @@ class InMemoryStateRepository(StateRepository):
             full_name: Optional display name.
             email: Optional contact email.
             organization_id: Optional organization link.
+            created_at: Timestamp when the user was created.
         """
         self._users[user_id] = {
             "id": user_id,
@@ -69,6 +70,26 @@ class InMemoryStateRepository(StateRepository):
             "organization_id": organization_id,
             "created_at": datetime.now(),
         }
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Lists all users in the system.
+
+        Returns:
+            A list of user dictionaries.
+        """
+        return list(self._users.values())
+
+    def delete_user(self, user_id: str):
+        """Permanently deletes a user.
+
+        Args:
+            user_id: The unique identifier for the user.
+        """
+        self._users.pop(user_id, None)
+        # Clean up memberships
+        to_del = [k for k in self._memberships if k.endswith(f":{user_id}")]
+        for k in to_del:
+            del self._memberships[k]
 
     def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a user by ID.

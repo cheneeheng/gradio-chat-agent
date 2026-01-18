@@ -328,6 +328,24 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def list_users(self) -> list[dict[str, Any]]:
+        """Lists all users in the system.
+
+        Returns:
+            A list of user dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def delete_user(self, user_id: str):
+        """Permanently deletes a user.
+
+        Args:
+            user_id: The unique identifier for the user.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
         """Retrieves a user by ID.
 

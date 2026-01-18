@@ -1,6 +1,5 @@
 """CLI tool for managing the Gradio Chat Agent."""
 
-import hashlib
 import json
 import os
 from pathlib import Path
