@@ -6,6 +6,7 @@ testing and local development.
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+import copy
 
 from gradio_chat_agent.models.execution_result import (
     ExecutionResult,
@@ -222,8 +223,7 @@ class InMemoryStateRepository(StateRepository):
         snapshots = self._snapshots.get(project_id, [])
         if not snapshots:
             return None
-        # Assuming last appended is latest
-        return snapshots[-1]
+        return self._reconstruct_snapshot(snapshots[-1])
 
     def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
         """Retrieves a specific state snapshot by ID.
@@ -234,23 +234,64 @@ class InMemoryStateRepository(StateRepository):
         Returns:
             The StateSnapshot if found, otherwise None.
         """
-        # Search all projects (inefficient but fine for in-memory/test)
         for snapshots in self._snapshots.values():
             for snap in snapshots:
                 if snap.snapshot_id == snapshot_id:
-                    return snap
+                    return self._reconstruct_snapshot(snap)
         return None
 
-    def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
-        """Persists a new state snapshot to the in-memory list.
+    def _reconstruct_snapshot(self, snap: StateSnapshot) -> StateSnapshot:
+        """Recursively reconstructs the full state for a snapshot."""
+        if snap.is_checkpoint or not snap.parent_id:
+            return snap
+
+        parent = self.get_snapshot(snap.parent_id)
+        if not parent:
+            return snap
+
+        from gradio_chat_agent.models.execution_result import StateDiffEntry
+        from gradio_chat_agent.utils import apply_state_diff
+
+        diffs = [StateDiffEntry(**d) for d in snap.components["_delta"]["diffs"]]
+        full_components = apply_state_diff(parent.components, diffs)
+
+        new_snap = copy.deepcopy(snap)
+        new_snap.components = full_components
+        return new_snap
+
+    def save_snapshot(
+        self,
+        project_id: str,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
+    ):
+        """Persists a new state snapshot.
 
         Args:
             project_id: The ID of the project to save the snapshot for.
             snapshot: The snapshot object to persist.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: ID of parent snapshot.
         """
         if project_id not in self._snapshots:
             self._snapshots[project_id] = []
-        self._snapshots[project_id].append(snapshot)
+
+        # For in-memory, we can store full state but keep metadata
+        # Or store deltas to test logic. I'll store deltas if requested.
+        new_snap = copy.deepcopy(snapshot)
+        new_snap.is_checkpoint = is_checkpoint
+        new_snap.parent_id = parent_id
+
+        if not is_checkpoint and parent_id:
+            parent = self.get_snapshot(parent_id)
+            if parent:
+                from gradio_chat_agent.utils import compute_state_diff
+
+                diffs = compute_state_diff(parent.components, snapshot.components)
+                new_snap.components = {"_delta": {"diffs": [d.model_dump(mode="json") for d in diffs]}}
+
+        self._snapshots[project_id].append(new_snap)
 
     def save_execution(self, project_id: str, result: ExecutionResult):
         """Persists an execution result to the in-memory list.
@@ -264,7 +305,12 @@ class InMemoryStateRepository(StateRepository):
         self._executions[project_id].append(result)
 
     def save_execution_and_snapshot(
-        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+        self,
+        project_id: str,
+        result: ExecutionResult,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
     ):
         """Persists an execution result and a new state snapshot.
 
@@ -272,8 +318,10 @@ class InMemoryStateRepository(StateRepository):
             project_id: The ID of the project.
             result: The execution result object.
             snapshot: The new state snapshot object.
+            is_checkpoint: Whether this is a checkpoint.
+            parent_id: Parent snapshot ID.
         """
-        self.save_snapshot(project_id, snapshot)
+        self.save_snapshot(project_id, snapshot, is_checkpoint, parent_id)
         self.save_execution(project_id, result)
 
     def get_execution_history(
@@ -365,15 +413,21 @@ class InMemoryStateRepository(StateRepository):
         """
         self._limits[project_id] = policy
 
-    def count_recent_executions(self, project_id: str, minutes: int) -> int:
-        """Counts successful executions in the last N minutes.
+    def count_recent_executions(
+        self,
+        project_id: str,
+        minutes: int,
+        status: Optional[ExecutionStatus] = None,
+    ) -> int:
+        """Counts executions in the last N minutes.
 
         Args:
             project_id: The ID of the project to count executions for.
             minutes: The lookback time window in minutes.
+            status: Optional status to filter by.
 
         Returns:
-            The number of successful executions found in the specified window.
+            The number of executions found in the specified window.
         """
         history = self._executions.get(project_id, [])
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
@@ -384,8 +438,9 @@ class InMemoryStateRepository(StateRepository):
             if ex_ts.tzinfo is None:
                 ex_ts = ex_ts.replace(tzinfo=timezone.utc)
 
-            if ex_ts >= cutoff and ex.status == ExecutionStatus.SUCCESS:
-                count += 1
+            if ex_ts >= cutoff:
+                if status is None or ex.status == status:
+                    count += 1
         return count
 
     def get_daily_budget_usage(self, project_id: str) -> float:

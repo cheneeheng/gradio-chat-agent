@@ -55,6 +55,19 @@ from gradio_chat_agent.registry.system_actions import (
     remember_action,
     remember_handler,
 )
+from gradio_chat_agent.registry.web_automation import (
+    browser_component,
+    click_action,
+    click_handler,
+    navigate_action,
+    navigate_handler,
+    scroll_action,
+    scroll_handler,
+    sync_browser_state_action,
+    sync_browser_state_handler,
+    type_action,
+    type_handler,
+)
 from gradio_chat_agent.ui.layout import create_ui
 from gradio_chat_agent.utils import hash_password
 
@@ -110,6 +123,16 @@ def create_app() -> FastAPI:
         status_indicator_update_action, status_indicator_update_handler
     )
 
+    # Web Automation Actions
+    registry.register_component(browser_component)
+    registry.register_action(navigate_action, navigate_handler)
+    registry.register_action(click_action, click_handler)
+    registry.register_action(type_action, type_handler)
+    registry.register_action(scroll_action, scroll_handler)
+    registry.register_action(
+        sync_browser_state_action, sync_browser_state_handler
+    )
+
     # 2. Setup Persistence
     db_url = os.environ.get(
         "DATABASE_URL", "sqlite:///gradio_chat_agent.sqlite3"
@@ -122,6 +145,12 @@ def create_app() -> FastAPI:
 
     # 3. Setup Engine
     engine = ExecutionEngine(registry=registry, repository=repository)
+
+    # 3.5 Setup Alerting
+    from gradio_chat_agent.observability.alerting import AlertingService
+
+    alerting_service = AlertingService(engine)
+    engine.add_post_execution_hook(alerting_service.check_execution_alerts)
 
     # 4. Setup Agent
     adapter = OpenAIAgentAdapter()
@@ -162,20 +191,32 @@ def create_app() -> FastAPI:
         )
 
     # Attach scheduler to app state for lifecycle management
-    # Note: In a multi-worker environment, you might want to run the
-    # scheduler in a single dedicated process instead.
     scheduler = SchedulerWorker(engine)
     app.state.scheduler = scheduler
+
+    # Setup Browser Automation Observer
+    from gradio_chat_agent.execution.browser_executor import BrowserExecutor
+    from gradio_chat_agent.execution.observer import AuditLogObserver
+
+    browser_executor = BrowserExecutor(engine)
+    browser_observer = AuditLogObserver(engine, poll_interval=2.0)
+    browser_observer.add_callback(browser_executor)
+    app.state.browser_observer = browser_observer
+    app.state.browser_executor = browser_executor
 
     @app.on_event("startup")
     def startup_event():
         app.state.scheduler.start()
+        app.state.browser_observer.start()
 
     @app.on_event("shutdown")
     def shutdown_event():
         app.state.scheduler.stop()
+        app.state.browser_observer.stop()
+        app.state.browser_executor.stop()
 
     return gr.mount_gradio_app(app, demo, path="/")
+
 
 
 def main():

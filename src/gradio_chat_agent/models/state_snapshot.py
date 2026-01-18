@@ -11,12 +11,15 @@ from pydantic import BaseModel, Field
 
 
 class StateSnapshot(BaseModel):
-    """Represents an immutable snapshot of the application state.
+    """Represents a snapshot of the application state.
 
     Attributes:
         snapshot_id: Unique identifier for this snapshot.
         timestamp: When the snapshot was created.
         components: Dictionary mapping component IDs to their state objects.
+        checksum: SHA-256 hash of the components dictionary.
+        is_checkpoint: Whether this is a full-state checkpoint or a delta.
+        parent_id: The ID of the previous snapshot this delta is relative to.
     """
 
     snapshot_id: str = Field(
@@ -33,4 +36,12 @@ class StateSnapshot(BaseModel):
     checksum: Optional[str] = Field(
         default=None,
         description="SHA-256 hash of the components dictionary for integrity verification.",
+    )
+    is_checkpoint: bool = Field(
+        default=True,
+        description="Whether this is a full-state checkpoint or a delta.",
+    )
+    parent_id: Optional[str] = Field(
+        default=None,
+        description="The ID of the previous snapshot this delta is relative to.",
     )

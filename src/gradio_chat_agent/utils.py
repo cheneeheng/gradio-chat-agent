@@ -11,6 +11,7 @@ import json
 import mimetypes
 from typing import Any, Optional
 
+import copy
 from gradio_chat_agent.models.enums import StateDiffOp
 from gradio_chat_agent.models.execution_result import StateDiffEntry
 
@@ -128,6 +129,85 @@ def compute_state_diff(
                 )
 
     return diffs
+
+
+def apply_state_diff(
+    state: dict[str, Any], diffs: list[StateDiffEntry]
+) -> dict[str, Any]:
+    """Applies a list of state diff entries to a state dictionary.
+
+    Args:
+        state: The base state dictionary.
+        diffs: The list of diff entries to apply.
+
+    Returns:
+        A new state dictionary with the diffs applied.
+    """
+    new_state = copy.deepcopy(state)
+
+    for diff in diffs:
+        path = diff.path
+        
+        # 1. Handle top-level component addition/removal
+        if diff.op == StateDiffOp.ADD and path not in new_state and "." not in path:
+             new_state[path] = diff.value
+             continue
+        
+        # 2. Try to find which component this path belongs to.
+        # We greedily match the longest prefix that exists in the state.
+        target_comp_id = None
+        remaining_parts = []
+        
+        parts = path.split(".")
+        for i in range(len(parts), 0, -1):
+            prefix = ".".join(parts[:i])
+            if prefix in new_state:
+                target_comp_id = prefix
+                remaining_parts = parts[i:]
+                break
+        
+        if target_comp_id:
+            current = new_state[target_comp_id]
+            # Navigate internal state
+            for part in remaining_parts[:-1]:
+                if part not in current or not isinstance(current[part], dict):
+                    current[part] = {}
+                current = current[part]
+            
+            if not remaining_parts:
+                # Path IS the component ID
+                if diff.op == StateDiffOp.REPLACE or diff.op == StateDiffOp.ADD:
+                    new_state[target_comp_id] = diff.value
+                elif diff.op == StateDiffOp.REMOVE:
+                    new_state.pop(target_comp_id, None)
+            else:
+                target_key = remaining_parts[-1]
+                if diff.op == StateDiffOp.ADD or diff.op == StateDiffOp.REPLACE:
+                    current[target_key] = diff.value
+                elif diff.op == StateDiffOp.REMOVE:
+                    current.pop(target_key, None)
+        else:
+            # Fallback: Naive split (for new components or paths not matching existing components)
+            if diff.op == StateDiffOp.ADD or diff.op == StateDiffOp.REPLACE:
+                parts = path.split(".")
+                current = new_state
+                for part in parts[:-1]:
+                    if part not in current or not isinstance(current[part], dict):
+                        current[part] = {}
+                    current = current[part]
+                current[parts[-1]] = diff.value
+            elif diff.op == StateDiffOp.REMOVE:
+                # Naive removal
+                parts = path.split(".")
+                current = new_state
+                for part in parts[:-1]:
+                    if part not in current or not isinstance(current[part], dict):
+                        break
+                    current = current[part]
+                else:
+                    current.pop(parts[-1], None)
+
+    return new_state
 
 
 def encode_media(file_path: str) -> dict[str, str]:

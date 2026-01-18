@@ -225,13 +225,15 @@ class Webhook(Base):
 
 
 class Snapshot(Base):
-    """Represents an immutable snapshot of a project's state.
+    """Represents a snapshot of a project's state.
 
     Attributes:
         id: Unique identifier for the snapshot.
         project_id: The ID of the project this snapshot belongs to.
         timestamp: Timestamp when the snapshot was captured.
-        components: JSON blob representing the state of all components.
+        components: JSON blob representing the state (full state or delta).
+        is_checkpoint: Whether this is a full-state checkpoint.
+        parent_id: The ID of the previous snapshot this delta is relative to.
         project: The project associated with this snapshot.
     """
 
@@ -243,6 +245,10 @@ class Snapshot(Base):
         DateTime, default=datetime.utcnow
     )
     components: Mapped[dict[str, Any]] = mapped_column(JSON)
+    is_checkpoint: Mapped[bool] = mapped_column(default=True)
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("snapshots.id"), nullable=True
+    )
 
     project: Mapped["Project"] = relationship(back_populates="snapshots")
 

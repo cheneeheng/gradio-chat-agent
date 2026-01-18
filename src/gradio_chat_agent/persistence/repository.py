@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from gradio_chat_agent.models.execution_result import (
     ExecutionResult,
+    ExecutionStatus,
 )
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 
@@ -41,12 +42,20 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
-    def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
+    def save_snapshot(
+        self,
+        project_id: str,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
+    ):
         """Persists a new state snapshot.
 
         Args:
             project_id: The ID of the project to save the snapshot for.
             snapshot: The snapshot object to persist.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot this delta is relative to.
         """
         pass  # pragma: no cover
 
@@ -62,7 +71,12 @@ class StateRepository(ABC):
 
     @abstractmethod
     def save_execution_and_snapshot(
-        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+        self,
+        project_id: str,
+        result: ExecutionResult,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
     ):
         """Persists an execution result and a new state snapshot atomically.
 
@@ -70,6 +84,8 @@ class StateRepository(ABC):
             project_id: The ID of the project.
             result: The execution result object.
             snapshot: The new state snapshot object.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot.
         """
         pass  # pragma: no cover
 
@@ -151,15 +167,21 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
-    def count_recent_executions(self, project_id: str, minutes: int) -> int:
-        """Counts successful executions in the last N minutes.
+    def count_recent_executions(
+        self,
+        project_id: str,
+        minutes: int,
+        status: Optional[ExecutionStatus] = None,
+    ) -> int:
+        """Counts executions in the last N minutes.
 
         Args:
             project_id: The ID of the project to count executions for.
             minutes: The lookback time window in minutes.
+            status: Optional status to filter by.
 
         Returns:
-            The number of successful executions found in the specified window.
+            The number of executions found in the specified window.
         """
 
         pass  # pragma: no cover

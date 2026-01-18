@@ -80,11 +80,7 @@ class SQLStateRepository(StateRepository):
             if not row:
                 return None
 
-            return StateSnapshot(
-                snapshot_id=row.id,
-                timestamp=row.timestamp,
-                components=row.components,
-            )
+            return self._reconstruct_snapshot(session, row)
 
     def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
         """Retrieves a specific state snapshot by ID.
@@ -99,27 +95,100 @@ class SQLStateRepository(StateRepository):
             row = session.get(Snapshot, snapshot_id)
             if not row:
                 return None
+            return self._reconstruct_snapshot(session, row)
+
+    def _reconstruct_snapshot(self, session, row: Snapshot) -> StateSnapshot:
+        """Recursively reconstructs the full state for a snapshot row."""
+        if row.is_checkpoint:
             return StateSnapshot(
                 snapshot_id=row.id,
                 timestamp=row.timestamp,
                 components=row.components,
+                is_checkpoint=True,
+                parent_id=row.parent_id,
             )
 
-    def save_snapshot(self, project_id: str, snapshot: StateSnapshot):
+        if not row.parent_id:
+            # Should not happen if is_checkpoint is False
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+                is_checkpoint=False,
+            )
+
+        parent_row = session.get(Snapshot, row.parent_id)
+        if not parent_row:
+            # Parent missing, return delta as is (fallback)
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+                is_checkpoint=False,
+                parent_id=row.parent_id,
+            )
+
+        parent_snapshot = self._reconstruct_snapshot(session, parent_row)
+
+        # Apply delta (row.components stores the diff list in this case)
+        from gradio_chat_agent.models.execution_result import StateDiffEntry
+        from gradio_chat_agent.utils import apply_state_diff
+
+        diffs = [StateDiffEntry(**d) for d in row.components["_delta"]["diffs"]]
+        full_components = apply_state_diff(parent_snapshot.components, diffs)
+
+        return StateSnapshot(
+            snapshot_id=row.id,
+            timestamp=row.timestamp,
+            components=full_components,
+            is_checkpoint=False,
+            parent_id=row.parent_id,
+        )
+
+    def save_snapshot(
+        self,
+        project_id: str,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
+    ):
         """Persists a new state snapshot.
 
         Args:
             project_id: The ID of the project to save the snapshot for.
             snapshot: The snapshot object to persist.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot.
         """
         with self.SessionLocal() as session:
             self._ensure_project(project_id)
+
+            components_data = snapshot.components
+            if not is_checkpoint and parent_id:
+                # Store only the delta
+                parent_row = session.get(Snapshot, parent_id)
+                if parent_row:
+                    parent_full = self._reconstruct_snapshot(
+                        session, parent_row
+                    )
+                    from gradio_chat_agent.utils import compute_state_diff
+
+                    diffs = compute_state_diff(
+                        parent_full.components, snapshot.components
+                    )
+                    components_data = {
+                        "_delta": {
+                            "diffs": [d.model_dump(mode="json") for d in diffs]
+                        }
+                    }
 
             db_snapshot = Snapshot(
                 id=snapshot.snapshot_id,
                 project_id=project_id,
                 timestamp=snapshot.timestamp,
-                components=snapshot.components,
+                components=components_data,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
             )
             session.add(db_snapshot)
             session.commit()
@@ -162,7 +231,12 @@ class SQLStateRepository(StateRepository):
             session.commit()
 
     def save_execution_and_snapshot(
-        self, project_id: str, result: ExecutionResult, snapshot: StateSnapshot
+        self,
+        project_id: str,
+        result: ExecutionResult,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
     ):
         """Persists an execution result and a new state snapshot atomically.
 
@@ -170,6 +244,8 @@ class SQLStateRepository(StateRepository):
             project_id: The ID of the project.
             result: The execution result object.
             snapshot: The new state snapshot object.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot.
         """
         with self.SessionLocal() as session:
             # 1. Ensure project exists
@@ -178,11 +254,31 @@ class SQLStateRepository(StateRepository):
                 session.add(Project(id=project_id, name="Default Project"))
 
             # 2. Save Snapshot
+            components_data = snapshot.components
+            if not is_checkpoint and parent_id:
+                parent_row = session.get(Snapshot, parent_id)
+                if parent_row:
+                    parent_full = self._reconstruct_snapshot(
+                        session, parent_row
+                    )
+                    from gradio_chat_agent.utils import compute_state_diff
+
+                    diffs = compute_state_diff(
+                        parent_full.components, snapshot.components
+                    )
+                    components_data = {
+                        "_delta": {
+                            "diffs": [d.model_dump(mode="json") for d in diffs]
+                        }
+                    }
+
             db_snapshot = Snapshot(
                 id=snapshot.snapshot_id,
                 project_id=project_id,
                 timestamp=snapshot.timestamp,
-                components=snapshot.components,
+                components=components_data,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
             )
             session.add(db_snapshot)
 
@@ -377,15 +473,21 @@ class SQLStateRepository(StateRepository):
 
             session.commit()
 
-    def count_recent_executions(self, project_id: str, minutes: int) -> int:
-        """Counts successful executions in the last N minutes.
+    def count_recent_executions(
+        self,
+        project_id: str,
+        minutes: int,
+        status: Optional[ExecutionStatus] = None,
+    ) -> int:
+        """Counts executions in the last N minutes.
 
         Args:
             project_id: The ID of the project to count executions for.
             minutes: The lookback time window in minutes.
+            status: Optional status to filter by.
 
         Returns:
-            The number of successful executions found in the specified window.
+            The number of executions found in the specified window.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
         cutoff_naive = cutoff.replace(tzinfo=None)
@@ -396,9 +498,11 @@ class SQLStateRepository(StateRepository):
                 .where(
                     Execution.project_id == project_id,
                     Execution.timestamp >= cutoff_naive,
-                    Execution.status == "success",
                 )
             )
+            if status:
+                stmt = stmt.where(Execution.status == status.value)
+
             return session.execute(stmt).scalar() or 0
 
     def get_daily_budget_usage(self, project_id: str) -> float:

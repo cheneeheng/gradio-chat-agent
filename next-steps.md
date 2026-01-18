@@ -67,7 +67,7 @@
 
 - [x] **Versioning:** Update the Registry to support versioned components/actions (e.g., `demo.counter@v1`).
 - [x] **Standard Library Expansion:** Expand the `std` namespace with common components (`std.text_input`, `std.slider`, `std.status_indicator`) and layouts to provide a consistent base for all projects.
-- [ ] **Web Automation Suite:** Implement a high-level browser component suite (`browser.click`, `browser.type`, `browser.scroll`) based on Playwright.
+- [x] **Web Automation Suite:** Implement a high-level browser component suite (`browser.click`, `browser.type`, `browser.scroll`) based on Playwright.
 - [x] **Standard Model/Inference Suite:** Implement the `model.selector` and `inference.run` examples from the documentation as a reusable package.
 
 ## 7. Developer Experience (CLI & API)
@@ -95,7 +95,7 @@
   - `llm_token_usage_total` (Counter for model tokens)
   - `active_projects` (Gauge)
 - [x] **Forecasting Service:** Implement a background job to analyze historical execution data and predict project budget exhaustion.
-- [ ] **Operational Alerting:** Create a system to trigger alerts (e.g., via system webhooks or Prometheus rules) for:
+- [x] **Operational Alerting:** Create a system to trigger alerts (e.g., via system webhooks or Prometheus rules) for:
   - High Failure Rates (e.g., >5% failure rate over 5 minutes)
   - LLM Latency Quantiles (e.g., P95 duration > 10 seconds)
   - Budget exhaustion (80%/90%/100% thresholds)
@@ -137,7 +137,7 @@
 
 - [x] **Transactional Atomicity:** Update the `ExecutionEngine` and `SQLStateRepository` to ensure that the creation of a new `StateSnapshot` and the recording of the `ExecutionResult` occur within a single database transaction. (Infrastructure & Scaling)
 - [x] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
-- [ ] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
+- [x] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
 - [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
 - [ ] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments.
 - [x] **Environment-Aware Server Initialization:** Update `app.py` to respect `GRADIO_SERVER_NAME` and `GRADIO_SERVER_PORT` environment variables, enabling flexible deployment in containerized environments (Docker/K8s).

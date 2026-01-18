@@ -754,6 +754,21 @@ class ExecutionEngine:
                 str(uuid.uuid4()) if not simulate else "simulated"
             )
 
+            # Decide if checkpoint or delta
+            # Heuristic: every 5th successful execution is a checkpoint
+            is_checkpoint = True
+            parent_id = None
+            if not simulate:
+                history = self.repository.get_execution_history(
+                    project_id, limit=10
+                )
+                success_count = sum(
+                    1 for e in history if e.status == ExecutionStatus.SUCCESS
+                )
+                if current_snapshot and success_count % 5 != 0:
+                    is_checkpoint = False
+                    parent_id = current_snapshot.snapshot_id
+
             # Media Hashing
             metadata = {}
             metadata["cost"] = action_cost
@@ -827,10 +842,16 @@ class ExecutionEngine:
                 snapshot_id=new_snapshot_id,
                 components=new_components,
                 checksum=compute_checksum(new_components),
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
             )
 
             self.repository.save_execution_and_snapshot(
-                project_id, result, new_snapshot
+                project_id,
+                result,
+                new_snapshot,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
             )
 
             # 10. Dispatch Side Effects
@@ -884,6 +905,8 @@ class ExecutionEngine:
                 snapshot_id=new_snapshot_id,
                 components=new_components,
                 checksum=compute_checksum(new_components),
+                is_checkpoint=True,
+                parent_id=None,
             )
 
             diffs = compute_state_diff(
@@ -901,7 +924,7 @@ class ExecutionEngine:
 
             # 3. Persistence
             self.repository.save_execution_and_snapshot(
-                project_id, result, new_snapshot
+                project_id, result, new_snapshot, is_checkpoint=True
             )
 
             # 4. Dispatch Side Effects
