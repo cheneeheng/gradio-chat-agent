@@ -47,7 +47,7 @@
 - [x] **Execution Windows:** Implement time-of-day and day-of-week restrictions in governance policies and validate them in the engine.
 - [x] **Approval Workflows:** Implement a `pending_approval` status for actions that exceed cost thresholds or risk levels.
 - [x] **Project Lifecycle Enforcement:** Add checks to the `ExecutionEngine` to block intents if a project is archived or locked.
-- [ ] **Advanced Policy Engine:** Transition from simple JSON limit checks to a more robust policy engine (e.g., OPA/Rego or a custom DSL).
+- [x] **Advanced Policy Engine:** Transition from simple JSON limit checks to a more robust policy engine (e.g., OPA/Rego or a custom DSL).
 - [x] **Safer Preconditions:** Replace `eval()` in the `ExecutionEngine` with a restricted evaluator (e.g., `RestrictedPython` or an AST-based validator).
 - [x] **Centralized Engine Configuration:** Implement an `EngineConfig` model in `engine.py` to manage runtime flags like `require_confirmed_for_confirmation_required`, decoupling core logic from environment-specific defaults as defined in the configuration docs.
 
@@ -123,7 +123,7 @@
 - [x] **User Model:** Implement a formal `User` table in the `SQLStateRepository` to store credentials, profiles, and organization links.
 - [x] **Default Admin Bootstrap:** Implement logic to create a default `admin/admin` account on startup, guarded by the `ALLOW_DEFAULT_ADMIN` environment variable.
 - [x] **RBAC Role Enforcement:** Update the `ExecutionEngine` to strictly validate user roles against action risk: `viewer` (no execution), `operator` (low/medium risk only), `admin` (full access).
-- [ ] **RBAC Mapping:** Implement a dynamic mapping system to resolve Gradio session users to specific project roles (viewer, operator, admin).
+- [x] **RBAC Mapping:** Implement a dynamic mapping system to resolve Gradio session users to specific project roles (viewer, operator, admin).
 - [ ] **Session Management:** Secure the API endpoints with proper Bearer token validation linked to the OIDC provider.
 
 ## 12. Deployment & Infrastructure
@@ -139,5 +139,5 @@
 - [x] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
 - [x] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
 - [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
-- [ ] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments.
+- [x] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments. (Section 13)
 - [x] **Environment-Aware Server Initialization:** Update `app.py` to respect `GRADIO_SERVER_NAME` and `GRADIO_SERVER_PORT` environment variables, enabling flexible deployment in containerized environments (Docker/K8s).

@@ -516,3 +516,29 @@ class StateRepository(ABC):
             True if healthy, False otherwise.
         """
         pass  # pragma: no cover
+
+    @abstractmethod
+    def acquire_lock(
+        self, project_id: str, holder_id: str, timeout_seconds: int = 10
+    ) -> bool:
+        """Attempts to acquire a distributed lock for a project.
+
+        Args:
+            project_id: The ID of the project.
+            holder_id: Unique identifier for the lock holder.
+            timeout_seconds: How long the lock remains valid.
+
+        Returns:
+            True if acquired, False if already held by another holder.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
+    def release_lock(self, project_id: str, holder_id: str):
+        """Releases a distributed lock.
+
+        Args:
+            project_id: The ID of the project.
+            holder_id: Unique identifier for the lock holder.
+        """
+        pass  # pragma: no cover

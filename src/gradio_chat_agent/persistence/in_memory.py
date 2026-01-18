@@ -4,9 +4,9 @@ This module provides a thread-safe, ephemeral state repository suitable for
 testing and local development.
 """
 
+import copy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-import copy
 
 from gradio_chat_agent.models.execution_result import (
     ExecutionResult,
@@ -252,7 +252,9 @@ class InMemoryStateRepository(StateRepository):
         from gradio_chat_agent.models.execution_result import StateDiffEntry
         from gradio_chat_agent.utils import apply_state_diff
 
-        diffs = [StateDiffEntry(**d) for d in snap.components["_delta"]["diffs"]]
+        diffs = [
+            StateDiffEntry(**d) for d in snap.components["_delta"]["diffs"]
+        ]
         full_components = apply_state_diff(parent.components, diffs)
 
         new_snap = copy.deepcopy(snap)
@@ -288,8 +290,14 @@ class InMemoryStateRepository(StateRepository):
             if parent:
                 from gradio_chat_agent.utils import compute_state_diff
 
-                diffs = compute_state_diff(parent.components, snapshot.components)
-                new_snap.components = {"_delta": {"diffs": [d.model_dump(mode="json") for d in diffs]}}
+                diffs = compute_state_diff(
+                    parent.components, snapshot.components
+                )
+                new_snap.components = {
+                    "_delta": {
+                        "diffs": [d.model_dump(mode="json") for d in diffs]
+                    }
+                }
 
         self._snapshots[project_id].append(new_snap)
 
@@ -710,3 +718,43 @@ class InMemoryStateRepository(StateRepository):
     def check_health(self) -> bool:
         """In-memory is always healthy."""
         return True
+
+    def acquire_lock(
+        self, project_id: str, holder_id: str, timeout_seconds: int = 10
+    ) -> bool:
+        """Attempts to acquire a lock in-memory.
+
+        Note: Simple implementation using a dict. In real distributed scenarios,
+        this would use a more robust mechanism.
+        """
+        if not hasattr(self, "_locks"):
+            self._locks = {}
+
+        now = datetime.now()
+        existing_lock = self._locks.get(project_id)
+
+        if existing_lock:
+            # Check if expired
+            if existing_lock["expires_at"] < now:
+                # Expired, take it
+                pass
+            elif existing_lock["holder_id"] == holder_id:
+                # Already held by this holder, renew
+                pass
+            else:
+                return False
+
+        self._locks[project_id] = {
+            "holder_id": holder_id,
+            "expires_at": now + timedelta(seconds=timeout_seconds),
+        }
+        return True
+
+    def release_lock(self, project_id: str, holder_id: str):
+        """Releases an in-memory lock."""
+        if not hasattr(self, "_locks"):
+            return
+
+        existing_lock = self._locks.get(project_id)
+        if existing_lock and existing_lock["holder_id"] == holder_id:
+            del self._locks[project_id]

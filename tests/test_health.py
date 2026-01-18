@@ -97,6 +97,14 @@ def test_app_health_endpoint_failure():
         def get_user(self, uid): pass
         def list_users(self): pass
         def get_org_rollup(self): return {}
+        def acquire_lock(self, pid, hid, t=10): return True
+        def release_lock(self, pid, hid): pass
+        def create_api_token(self, uid, n, tid, e=None): pass
+        def list_api_tokens(self, uid): return []
+        def revoke_api_token(self, tid): pass
+        def validate_api_token(self, tid): return None
+        def rotate_webhook_secret(self, wid, s): pass
+        def save_execution_and_snapshot(self, pid, r, s, ic=True, paid=None): pass
 
     app = FastAPI()
     repository = BrokenRepo()

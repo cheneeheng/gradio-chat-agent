@@ -73,6 +73,9 @@ class TestApiEndpoints:
 
         registry.register_action(action, handler)
 
+        # Add api_user as admin for headless tests
+        repository.add_project_member(project_id, "api_user", "admin")
+
         return api, engine, repository, project_id
 
     def test_execute_action_success(self, setup):
@@ -365,21 +368,21 @@ class TestApiEndpoints:
         res = api.manage_membership(MembershipOp.ADD, pid, "alice", "viewer")
         assert res["code"] == 0
         members = repo.get_project_members(pid)
-        assert len(members) == 1
-        assert members[0]["user_id"] == "alice"
-        assert members[0]["role"] == "viewer"
+        assert len(members) == 2
+        alice_member = next(m for m in members if m["user_id"] == "alice")
+        assert alice_member["role"] == "viewer"
 
         # Update
         res = api.manage_membership(MembershipOp.UPDATE_ROLE, pid, "alice", "admin")
         assert res["code"] == 0
         members = repo.get_project_members(pid)
-        assert members[0]["role"] == "admin"
+        assert any(m["user_id"] == "alice" and m["role"] == "admin" for m in members)
 
         # Remove
         res = api.manage_membership(MembershipOp.REMOVE, pid, "alice")
         assert res["code"] == 0
         members = repo.get_project_members(pid)
-        assert len(members) == 0
+        assert len(members) == 1
 
     def test_manage_webhook(self, setup):
         api, _, repo, pid = setup

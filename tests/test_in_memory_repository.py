@@ -113,21 +113,23 @@ class TestInMemoryRepository:
         repo = InMemoryStateRepository()
         pid = "p1"
         from gradio_chat_agent.models.execution_result import ExecutionResult, ExecutionStatus
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
+        
+        now = datetime.now(timezone.utc)
         
         # Success with cost
         res1 = ExecutionResult(
             request_id="r1", action_id="a", status=ExecutionStatus.SUCCESS, 
             state_snapshot_id="s", metadata={"cost": 10},
-            timestamp=datetime.now()
+            timestamp=now
         )
         repo.save_execution(pid, res1)
         
-        # Failed (should be ignored)
+        # Failed (should be counted for rate limits, but ignored for budget)
         res2 = ExecutionResult(
             request_id="r2", action_id="a", status=ExecutionStatus.FAILED, 
             state_snapshot_id="s", metadata={"cost": 100},
-            timestamp=datetime.now()
+            timestamp=now
         )
         repo.save_execution(pid, res2)
         
@@ -135,12 +137,13 @@ class TestInMemoryRepository:
         res3 = ExecutionResult(
             request_id="r3", action_id="a", status=ExecutionStatus.SUCCESS, 
             state_snapshot_id="s", metadata={"cost": 1000},
-            timestamp=datetime.now() - timedelta(days=2)
+            timestamp=now - timedelta(days=2)
         )
         repo.save_execution(pid, res3)
         
         assert repo.get_daily_budget_usage(pid) == 10.0
-        assert repo.count_recent_executions(pid, 60) == 1
+        # Should count BOTH success and failure in the last hour
+        assert repo.count_recent_executions(pid, 60) == 2
 
     def test_schedule_management(self):
         repo = InMemoryStateRepository()

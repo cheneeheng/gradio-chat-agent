@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.models.api import ApiResponse
@@ -37,6 +37,7 @@ class ApiEndpoints:
         inputs: dict[str, Any],
         mode: str = "assisted",
         confirmed: bool = False,
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Executes a single action via the engine.
 
@@ -46,6 +47,7 @@ class ApiEndpoints:
             inputs: A dictionary of arguments matching the action's input schema.
             mode: Execution mode (interactive, assisted, autonomous).
             confirmed: Set to true to bypass confirmation gates.
+            user_id: The ID of the user.
 
         Returns:
             The execution result as a dictionary.
@@ -66,15 +68,16 @@ class ApiEndpoints:
             confirmed=confirmed,
         )
 
-        # Execute (using 'api_user' or similar role - assuming API caller is authorized)
-        # TODO: Real auth integration for API calls
+        # Resolve roles
+        target_user_id = user_id or "api_user"
+        user_roles = self.engine.resolve_user_roles(project_id, target_user_id)
+
+        # Execute
         result = self.engine.execute_intent(
             project_id=project_id,
             intent=intent,
-            user_roles=[
-                "admin"
-            ],  # API access assumed Admin for now per docs/22_API_REFERENCE
-            user_id="api_user",
+            user_roles=user_roles,
+            user_id=target_user_id,
         )
 
         return ApiResponse(
@@ -89,6 +92,7 @@ class ApiEndpoints:
         action_id: str,
         inputs: dict[str, Any],
         mode: str = "assisted",
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Simulates a single action via the engine.
 
@@ -97,6 +101,7 @@ class ApiEndpoints:
             action_id: The identifier of the action to execute.
             inputs: A dictionary of arguments matching the action's input schema.
             mode: Execution mode.
+            user_id: The ID of the user.
 
         Returns:
             The execution result wrapped in ApiResponse (simulated=True).
@@ -114,11 +119,14 @@ class ApiEndpoints:
             else ExecutionMode.ASSISTED,
         )
 
+        target_user_id = user_id or "api_user"
+        user_roles = self.engine.resolve_user_roles(project_id, target_user_id)
+
         result = self.engine.execute_intent(
             project_id=project_id,
             intent=intent,
-            user_roles=["admin"],
-            user_id="api_user",
+            user_roles=user_roles,
+            user_id=target_user_id,
             simulate=True,
         )
 
@@ -133,6 +141,7 @@ class ApiEndpoints:
         project_id: str,
         plan: dict[str, Any],
         mode: str = "assisted",
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Executes a multi-step plan via the engine.
 
@@ -140,6 +149,7 @@ class ApiEndpoints:
             project_id: The target project ID.
             plan: The plan dictionary (matching ExecutionPlan schema).
             mode: Execution mode (interactive, assisted, autonomous).
+            user_id: The ID of the user.
 
         Returns:
             Execution results wrapped in ApiResponse.
@@ -152,11 +162,14 @@ class ApiEndpoints:
                 code=1, message=f"Invalid plan: {str(e)}"
             ).model_dump(mode="json")
 
+        target_user_id = user_id or "api_user"
+        user_roles = self.engine.resolve_user_roles(project_id, target_user_id)
+
         results = self.engine.execute_plan(
             project_id=project_id,
             plan=plan_obj,
-            user_roles=["admin"],
-            user_id="api_user",
+            user_roles=user_roles,
+            user_id=target_user_id,
         )
 
         all_success = all(res.status == "success" for res in results)
@@ -174,6 +187,7 @@ class ApiEndpoints:
         project_id: str,
         plan: dict[str, Any],
         mode: str = "assisted",
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Simulates a multi-step plan via the engine.
 
@@ -181,6 +195,7 @@ class ApiEndpoints:
             project_id: The target project ID.
             plan: The plan dictionary.
             mode: Execution mode.
+            user_id: The ID of the user.
 
         Returns:
             Execution results wrapped in ApiResponse (simulated=True).
@@ -192,11 +207,14 @@ class ApiEndpoints:
                 code=1, message=f"Invalid plan: {str(e)}"
             ).model_dump(mode="json")
 
+        target_user_id = user_id or "api_user"
+        user_roles = self.engine.resolve_user_roles(project_id, target_user_id)
+
         results = self.engine.execute_plan(
             project_id=project_id,
             plan=plan_obj,
-            user_roles=["admin"],
-            user_id="api_user",
+            user_roles=user_roles,
+            user_id=target_user_id,
             simulate=True,
         )
 
@@ -211,17 +229,20 @@ class ApiEndpoints:
         ).model_dump(mode="json")
 
     def revert_snapshot(
-        self, project_id: str, snapshot_id: str
+        self, project_id: str, snapshot_id: str, user_id: Optional[str] = None
     ) -> dict[str, Any]:
         """Reverts the project state to a specific snapshot.
 
         Args:
             project_id: The target project ID.
             snapshot_id: The snapshot ID to revert to.
+            user_id: The ID of the user.
 
         Returns:
             The execution result wrapped in ApiResponse.
         """
+        # Note: Revert logic currently doesn't check user_roles inside revert_to_snapshot
+        # but we should ideally pass it.
         result = self.engine.revert_to_snapshot(project_id, snapshot_id)
         return ApiResponse(
             code=0 if result.status == "success" else 1,
@@ -319,11 +340,16 @@ class ApiEndpoints:
             trace={"trigger": "webhook", "webhook_id": webhook_id},
         )
 
+        project_id = webhook["project_id"]
+        user_id = "webhook"
+        # Webhooks are trusted system triggers
+        user_roles = ["admin"]
+
         result = self.engine.execute_intent(
-            project_id=webhook["project_id"],
+            project_id=project_id,
             intent=intent,
-            user_roles=["admin"],
-            user_id="webhook",
+            user_roles=user_roles,
+            user_id=user_id,
         )
 
         return ApiResponse(
@@ -344,17 +370,11 @@ class ApiEndpoints:
         Returns:
             Object containing components and actions declarations.
         """
-        # Determine user role
-        user_role = "viewer"
-        if user_id:
-            members = self.engine.repository.get_project_members(project_id)
-            for m in members:
-                if m["user_id"] == user_id:
-                    user_role = m["role"]
-                    break
+        # Centralized role resolution
+        user_roles = self.engine.resolve_user_roles(project_id, user_id)
 
         actions = self.engine.registry.list_actions()
-        if user_role != "admin":
+        if "admin" not in user_roles:
             actions = [
                 a for a in actions if a.permission.visibility != "developer"
             ]
@@ -803,9 +823,9 @@ class ApiEndpoints:
             List of tokens wrapped in ApiResponse.
         """
         if not self._is_system_admin(user_id) and user_id != owner_user_id:
-            return ApiResponse(
-                code=1, message="Permission denied"
-            ).model_dump(mode="json")
+            return ApiResponse(code=1, message="Permission denied").model_dump(
+                mode="json"
+            )
 
         tokens = self.engine.repository.list_api_tokens(owner_user_id)
         return ApiResponse(data=tokens).model_dump(mode="json")

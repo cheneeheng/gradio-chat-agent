@@ -488,10 +488,11 @@ class TestEngine:
         assert engine._safe_eval("30 not in d", context) is True
         assert engine._safe_eval("True and (False or True)", context) is True
 
-    def test_engine_safe_eval_forbidden_call(self, setup):
+    def test_engine_safe_eval_forbidden_node(self, setup):
         engine, _, _, _ = setup
-        with pytest.raises(ValueError, match="Forbidden expression node: Call"):
-            engine._safe_eval("len(d)", {"d": [1]})
+        # List comprehensions are forbidden
+        with pytest.raises(ValueError, match="Forbidden expression node: ListComp"):
+            engine._safe_eval("[x for x in d]", {"d": [1]})
 
     def test_hourly_rate_limit(self, setup):
         engine, _, repo, pid = setup

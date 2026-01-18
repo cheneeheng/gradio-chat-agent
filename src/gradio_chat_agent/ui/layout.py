@@ -92,13 +92,22 @@ class UIController:
     def refresh_ui(self, pid: str, uid: str):
         """Refresh all UI components."""
         state = self.fetch_state(pid)
+
+        # Resolve roles for the user
+        user_roles = self.engine.resolve_user_roles(pid, uid)
+
+        # Filter actions based on role
+        actions = self.engine.registry.list_actions()
+        if "admin" not in user_roles:
+            actions = [
+                a for a in actions if a.permission.visibility != "developer"
+            ]
+
         reg_info = {
             "components": [
                 c.component_id for c in self.engine.registry.list_components()
             ],
-            "actions": [
-                a.action_id for a in self.engine.registry.list_actions()
-            ],
+            "actions": [a.action_id for a in actions],
         }
         facts_data = self.fetch_facts_df(pid, uid)
         members_data = self.fetch_members_df(pid)
@@ -175,28 +184,21 @@ class UIController:
             c.component_id: c.model_dump()
             for c in self.engine.registry.list_components()
         }
-        act_reg = {
-            a.action_id: a.model_dump()
-            for a in self.engine.registry.list_actions()
-        }
+        act_reg_list = self.engine.registry.list_actions()
 
-        # Visibility Filtering
-        # 1. Determine user role for this project
-        members = self.engine.repository.get_project_members(pid)
-        user_role = "viewer"  # Default
-        for m in members:
-            if m["user_id"] == uid:
-                user_role = m["role"]
-                break
+        # Visibility Filtering using centralized role resolution
+        user_roles = self.engine.resolve_user_roles(pid, uid)
 
         # 2. Filter actions
         # 'developer' visibility actions are only shown to 'admin'
-        if user_role != "admin":
-            act_reg = {
-                aid: adef
-                for aid, adef in act_reg.items()
-                if adef["permission"]["visibility"] != "developer"
-            }
+        if "admin" not in user_roles:
+            act_reg_list = [
+                a
+                for a in act_reg_list
+                if a.permission.visibility != "developer"
+            ]
+
+        act_reg = {a.action_id: a.model_dump() for a in act_reg_list}
 
         # Media processing
         media = None
@@ -285,7 +287,7 @@ class UIController:
 
             elif intent.type == IntentType.ACTION_CALL:
                 exec_result = self.engine.execute_intent(
-                    pid, intent, user_roles=[user_role], user_id=uid
+                    pid, intent, user_roles=user_roles, user_id=uid
                 )
                 last_result_json = exec_result.model_dump(mode="json")
 
@@ -399,16 +401,11 @@ class UIController:
                 *updates,
             )
 
-        # Determine user role
-        members = self.engine.repository.get_project_members(pid)
-        user_role = "viewer"
-        for m in members:
-            if m["user_id"] == uid:
-                user_role = m["role"]
-                break
+        # Resolve roles
+        user_roles = self.engine.resolve_user_roles(pid, uid)
 
         results = self.engine.execute_plan(
-            pid, plan, user_roles=[user_role], user_id=uid
+            pid, plan, user_roles=user_roles, user_id=uid
         )
 
         summary = "### Plan Execution Result\n"

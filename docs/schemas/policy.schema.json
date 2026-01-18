@@ -53,6 +53,33 @@
         }
       }
     },
+    "role_mappings": {
+      "type": "array",
+      "description": "Rules for dynamic role assignment based on user attributes.",
+      "items": {
+        "type": "object",
+        "required": ["role", "condition"],
+        "properties": {
+          "role": { "type": "string", "enum": ["viewer", "operator", "admin"] },
+          "condition": { "type": "string", "description": "Python expression evaluated against the user object (e.g., 'user.email.endswith(\"@corp.com\")')." }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "description": "Custom governance rules evaluated by the engine.",
+      "items": {
+        "type": "object",
+        "required": ["id", "condition", "effect"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9._-]+$" },
+          "description": { "type": "string" },
+          "condition": { "type": "string", "description": "Python expression evaluated against {state, inputs, user, roles}." },
+          "effect": { "type": "string", "enum": ["allow", "reject", "require_approval"] },
+          "message": { "type": "string", "description": "Custom message for rejections or approvals." }
+        }
+      }
+    },
     "execution_windows": {
       "type": "object",
       "properties": {

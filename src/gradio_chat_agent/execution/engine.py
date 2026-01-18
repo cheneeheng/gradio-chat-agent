@@ -8,6 +8,7 @@ inputs, checks permissions, and records audit logs.
 import ast
 import copy
 import hashlib
+import os
 import threading
 import time
 import uuid
@@ -100,6 +101,61 @@ class ExecutionEngine:
         """
         self.post_execution_hooks.append(hook)
 
+    def resolve_user_roles(
+        self, project_id: str, user_id: str | None
+    ) -> list[str]:
+        """Resolves the roles for a user in a specific project.
+
+        Role resolution priority:
+        1. Explicit project membership (stored in the database).
+        2. Dynamic role mapping rules defined in the project policy.
+        3. Default role (['viewer']).
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The unique identifier of the user.
+
+        Returns:
+            A list of role identifiers.
+        """
+        if not user_id:
+            return ["viewer"]
+
+        # 1. Check explicit membership
+        members = self.repository.get_project_members(project_id)
+        for m in members:
+            if m["user_id"] == user_id:
+                return [m["role"]]
+
+        # 2. Check dynamic mapping rules
+        user = self.repository.get_user(user_id)
+        if user:
+            limits = self.repository.get_project_limits(project_id)
+            mappings = limits.get("role_mappings", [])
+
+            # Context for evaluation
+            # Convert dict to a simple object-like structure for dot access in expressions
+            class UserProxy:
+                def __init__(self, data):
+                    for k, v in data.items():
+                        setattr(self, k, v)
+
+            proxy = UserProxy(user)
+
+            for mapping in mappings:
+                condition = mapping.get("condition")
+                role = mapping.get("role")
+                if condition and role:
+                    try:
+                        if self._safe_eval(condition, {"user": proxy}):
+                            return [role]
+                    except Exception as e:
+                        logger.warning(
+                            f"Error evaluating role mapping for user {user_id}: {str(e)}"
+                        )
+
+        return ["viewer"]
+
     def _dispatch_post_execution(
         self, project_id: str, result: ExecutionResult
     ):
@@ -141,6 +197,44 @@ class ExecutionEngine:
             if project_id not in self.project_locks:
                 self.project_locks[project_id] = threading.Lock()
             return self.project_locks[project_id]
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def project_lock(self, project_id: str, timeout: int = 10):
+        """Context manager for project-level locking.
+
+        Uses both local threading locks and distributed database locks.
+        """
+        local_lock = self._get_project_lock(project_id)
+        holder_id = f"{os.getpid()}:{threading.get_ident()}"
+
+        start_wait = time.time()
+        if not local_lock.acquire(timeout=timeout):
+            raise RuntimeError(
+                f"Could not acquire local lock for project {project_id} within {timeout}s"
+            )
+
+        try:
+            # Acquire distributed lock
+            acquired = False
+            while time.time() - start_wait < timeout:
+                if self.repository.acquire_lock(
+                    project_id, holder_id, timeout_seconds=timeout
+                ):
+                    acquired = True
+                    break
+                time.sleep(0.1)
+
+            if not acquired:
+                raise RuntimeError(
+                    f"Could not acquire distributed lock for project {project_id} within {timeout}s"
+                )
+
+            yield
+        finally:
+            self.repository.release_lock(project_id, holder_id)
+            local_lock.release()
 
     def _is_within_execution_window(self, windows: list[dict]) -> bool:
         """Checks if the current time is within any of the allowed windows.
@@ -229,6 +323,7 @@ class ExecutionEngine:
             ast.NotIn,
             ast.USub,
             ast.UAdd,
+            ast.Call,
         )
 
         for node in ast.walk(tree):
@@ -308,6 +403,91 @@ class ExecutionEngine:
                     current_simulated_state = result._simulated_state
 
         return results
+
+    def _evaluate_policy_rules(
+        self,
+        project_id: str,
+        intent: ChatIntent,
+        current_state: dict,
+        user_id: Optional[str],
+        user_roles: list[str],
+    ) -> Optional[ExecutionResult]:
+        """Evaluates custom policy rules defined in the project policy.
+
+        Args:
+            project_id: The ID of the project.
+            intent: The requested intent.
+            current_state: The current application state.
+            user_id: The ID of the user.
+            user_roles: The resolved roles for the user.
+
+        Returns:
+            An ExecutionResult if a rule triggers a rejection or approval requirement,
+            otherwise None.
+        """
+        limits = self.repository.get_project_limits(project_id)
+        rules = limits.get("rules", [])
+
+        # Construct evaluation context
+        user_obj = None
+        if user_id:
+            user_data = self.repository.get_user(user_id)
+            if user_data:
+
+                class UserProxy:
+                    def __init__(self, data):
+                        for k, v in data.items():
+                            setattr(self, k, v)
+
+                user_obj = UserProxy(user_data)
+
+        eval_context = {
+            "state": current_state,
+            "inputs": intent.inputs or {},
+            "user": user_obj,
+            "roles": user_roles,
+            "action_id": intent.action_id,
+        }
+
+        for rule in rules:
+            condition = rule.get("condition")
+            effect = rule.get("effect")
+            if not condition or not effect:
+                continue
+
+            try:
+                if self._safe_eval(condition, eval_context):
+                    message = (
+                        rule.get("message")
+                        or f"Rule triggered: {rule.get('id')}"
+                    )
+
+                    if effect == "reject":
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            message,
+                            code="policy_rule_rejection",
+                            user_id=user_id,
+                        )
+                    elif effect == "require_approval":
+                        if not intent.confirmed:
+                            result = ExecutionResult(
+                                request_id=intent.request_id,
+                                user_id=user_id,
+                                action_id=intent.action_id or "unknown",
+                                status=ExecutionStatus.PENDING_APPROVAL,
+                                message=message,
+                                state_snapshot_id="none",
+                            )
+                            self.repository.save_execution(project_id, result)
+                            return result
+            except Exception as e:
+                logger.warning(
+                    f"Error evaluating policy rule {rule.get('id')}: {str(e)}"
+                )
+
+        return None
 
     def execute_intent(
         self,
@@ -452,8 +632,7 @@ class ExecutionEngine:
                 )
 
         # 2. Acquire Lock
-        lock = self._get_project_lock(project_id)
-        with lock:
+        with self.project_lock(project_id):
             # 3. Load State
             if override_state is not None:
                 current_snapshot = StateSnapshot(
@@ -494,6 +673,17 @@ class ExecutionEngine:
                     user_id=user_id,
                     execution_time_ms=get_duration(),
                 )
+
+            # 4.5 Evaluate custom policy rules
+            rule_result = self._evaluate_policy_rules(
+                project_id,
+                intent,
+                current_snapshot.components,
+                user_id,
+                user_roles,
+            )
+            if rule_result:
+                return rule_result
 
             action_cost = getattr(action, "cost", 1.0)
 
@@ -874,8 +1064,7 @@ class ExecutionEngine:
         Returns:
             The execution result of the revert operation.
         """
-        lock = self._get_project_lock(project_id)
-        with lock:
+        with self.project_lock(project_id):
             # 1. Validation
             target_snapshot = self.repository.get_snapshot(snapshot_id)
             if not target_snapshot:

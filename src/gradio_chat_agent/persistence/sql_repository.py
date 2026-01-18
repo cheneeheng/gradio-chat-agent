@@ -134,7 +134,9 @@ class SQLStateRepository(StateRepository):
         from gradio_chat_agent.models.execution_result import StateDiffEntry
         from gradio_chat_agent.utils import apply_state_diff
 
-        diffs = [StateDiffEntry(**d) for d in row.components["_delta"]["diffs"]]
+        diffs = [
+            StateDiffEntry(**d) for d in row.components["_delta"]["diffs"]
+        ]
         full_components = apply_state_diff(parent_snapshot.components, diffs)
 
         return StateSnapshot(
@@ -875,6 +877,58 @@ class SQLStateRepository(StateRepository):
                 return True
         except Exception:
             return False
+
+    def acquire_lock(
+        self, project_id: str, holder_id: str, timeout_seconds: int = 10
+    ) -> bool:
+        """Attempts to acquire a distributed lock in SQL."""
+        from gradio_chat_agent.persistence.models import Lock
+
+        with self.SessionLocal() as session:
+            now = datetime.utcnow()
+            expires_at = now + timedelta(seconds=timeout_seconds)
+
+            # Check if lock exists
+            lock = session.get(Lock, project_id)
+
+            if lock:
+                # Check if expired or held by same holder
+                if (
+                    lock.expires_at is not None and lock.expires_at < now
+                ) or lock.holder_id == holder_id:
+                    lock.holder_id = holder_id
+                    lock.acquired_at = now
+                    lock.expires_at = expires_at
+                    session.commit()
+                    return True
+                else:
+                    return False
+            else:
+                # Create new lock
+                new_lock = Lock(
+                    project_id=project_id,
+                    holder_id=holder_id,
+                    acquired_at=now,
+                    expires_at=expires_at,
+                )
+                session.add(new_lock)
+                try:
+                    session.commit()
+                    return True
+                except Exception:
+                    # Race condition: someone else might have inserted it
+                    session.rollback()
+                    return False
+
+    def release_lock(self, project_id: str, holder_id: str):
+        """Releases a distributed lock in SQL."""
+        from gradio_chat_agent.persistence.models import Lock
+
+        with self.SessionLocal() as session:
+            lock = session.get(Lock, project_id)
+            if lock and lock.holder_id == holder_id:
+                session.delete(lock)
+                session.commit()
 
     def list_projects(self) -> list[dict[str, Any]]:
         """Lists all projects.

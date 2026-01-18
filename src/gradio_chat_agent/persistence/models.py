@@ -90,7 +90,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String)
     full_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    organization_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    organization_id: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )
@@ -288,7 +290,9 @@ class Execution(Base):
     message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     state_snapshot_id: Mapped[str] = mapped_column(ForeignKey("snapshots.id"))
     state_diff: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
-    intent: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    intent: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True
+    )
     error: Mapped[Optional[dict[str, Any]]] = mapped_column(
         JSON, nullable=True
     )
@@ -327,4 +331,26 @@ class SessionFact(Base):
         UniqueConstraint(
             "project_id", "user_id", "key", name="uq_project_user_key"
         ),
+    )
+
+
+class Lock(Base):
+    """Represents a distributed lock for a project.
+
+    Attributes:
+        project_id: The ID of the project being locked.
+        holder_id: A unique identifier for the process/thread holding the lock.
+        acquired_at: Timestamp when the lock was acquired.
+        expires_at: Optional timestamp when the lock should automatically expire.
+    """
+
+    __tablename__ = "locks"
+
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    holder_id: Mapped[str] = mapped_column(String)
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
     )
