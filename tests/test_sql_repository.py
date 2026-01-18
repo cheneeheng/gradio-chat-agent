@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta, timezone
 import pytest
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
@@ -255,3 +256,11 @@ class TestSQLRepository:
         p1_wh = repo.list_webhooks(project_id="p1")
         assert len(p1_wh) == 1
         assert p1_wh[0]["id"] == "wh1"
+
+    def test_check_health_failure(self, repo):
+        # Mock SessionLocal to raise exception on context enter or execute
+        with patch.object(repo, "SessionLocal") as mock_session_cls:
+            mock_session = mock_session_cls.return_value
+            mock_session.__enter__.return_value.execute.side_effect = Exception("DB Down")
+            
+            assert repo.check_health() is False

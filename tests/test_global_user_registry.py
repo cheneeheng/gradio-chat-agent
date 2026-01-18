@@ -19,12 +19,12 @@ class TestGlobalUserRegistry:
         repo.create_user("u2", "h", full_name="N2")
         
         # List
-        res = api.list_users()
+        res = api.list_users(user_id="admin")
         assert len(res["data"]) == 2
         
         # Delete
-        api.delete_user("u1")
-        res2 = api.list_users()
+        api.delete_user("u1", user_id="admin")
+        res2 = api.list_users(user_id="admin")
         assert len(res2["data"]) == 1
         assert res2["data"][0]["id"] == "u2"
 

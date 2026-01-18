@@ -34,7 +34,7 @@ class TestSideEffects:
         engine.add_post_execution_hook(hook)
         
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.act")
-        engine.execute_intent(pid, intent)
+        engine.execute_intent(pid, intent, user_roles=["admin"])
         
         hook.assert_called_once()
         args, _ = hook.call_args
@@ -47,7 +47,7 @@ class TestSideEffects:
         engine.add_post_execution_hook(hook)
         
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.act")
-        engine.execute_intent(pid, intent, simulate=True)
+        engine.execute_intent(pid, intent, simulate=True, user_roles=["admin"])
         
         hook.assert_not_called()
 
@@ -58,7 +58,7 @@ class TestSideEffects:
         
         # Missing action_id causes rejection
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="missing")
-        engine.execute_intent(pid, intent)
+        engine.execute_intent(pid, intent, user_roles=["admin"])
         
         hook.assert_not_called()
 
@@ -69,7 +69,7 @@ class TestSideEffects:
         
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.act")
         # Should not raise exception
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == "success"
         hook.assert_called_once()
 
@@ -87,3 +87,20 @@ class TestSideEffects:
         hook.assert_called_once()
         args, _ = hook.call_args
         assert args[1].action_id == "system.revert"
+
+    def test_dispatch_post_execution_unreachable_branches(self, setup):
+        engine, pid = setup
+        hook = MagicMock()
+        engine.add_post_execution_hook(hook)
+        
+        from gradio_chat_agent.models.execution_result import ExecutionResult, ExecutionStatus
+        
+        # 1. Simulated
+        res_sim = ExecutionResult(request_id="1", action_id="a", status=ExecutionStatus.SUCCESS, state_snapshot_id="s", simulated=True)
+        engine._dispatch_post_execution(pid, res_sim)
+        hook.assert_not_called()
+        
+        # 2. Not Success
+        res_fail = ExecutionResult(request_id="2", action_id="a", status=ExecutionStatus.FAILED, state_snapshot_id="s")
+        engine._dispatch_post_execution(pid, res_fail)
+        hook.assert_not_called()

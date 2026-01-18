@@ -52,6 +52,18 @@ class TestReconstruction:
         state = engine.reconstruct_state(pid, target_timestamp=time_limit)
         assert state["comp"]["v"] == 1
 
+    def test_reconstruct_naive_timestamp(self, setup):
+        engine, pid = setup
+        from datetime import datetime
+        
+        engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="set", inputs={"v": 10}), user_roles=["admin"])
+        
+        # Naive timestamp
+        limit = datetime.now()
+        
+        state = engine.reconstruct_state(pid, target_timestamp=limit)
+        assert state["comp"]["v"] == 10
+
     def test_reconstruct_component_removal(self, setup):
         engine, pid = setup
         from gradio_chat_agent.models.execution_result import ExecutionResult, StateDiffEntry

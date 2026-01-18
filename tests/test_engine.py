@@ -88,7 +88,7 @@ class TestEngine:
             inputs={"value": 10},
         )
 
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.SUCCESS
         # Diff recurses to the leaf
         assert result.state_diff[0].value == 10
@@ -106,7 +106,7 @@ class TestEngine:
             request_id="req-1",
             action_id="missing.action",
         )
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.REJECTED
         assert "not found" in result.message
 
@@ -118,7 +118,7 @@ class TestEngine:
             action_id="demo.counter.set",
             inputs={"value": "not an integer"}, # Schema expects integer
         )
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.REJECTED
         assert "validation failed" in result.message
 
@@ -195,14 +195,14 @@ class TestEngine:
             action_id="demo.decrement",
         )
         
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.REJECTED
         assert "Precondition failed" in result.message
 
         # Set state to 10
         repo.save_snapshot(pid, StateSnapshot(snapshot_id="1", components={"demo.counter": {"value": 10}}))
         
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.SUCCESS
 
     def test_execute_invalid_intent_type(self, setup):
@@ -212,7 +212,7 @@ class TestEngine:
             request_id="req-1",
             question="What?"
         )
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.REJECTED
         assert "only executes action_call" in result.message
 
@@ -239,7 +239,7 @@ class TestEngine:
             request_id="req-1",
             action_id="demo.broken",
         )
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.FAILED
         assert "Handler error" in result.message
 
@@ -270,7 +270,7 @@ class TestEngine:
             request_id="req-1",
             action_id="demo.badpre",
         )
-        result = engine.execute_intent(pid, intent)
+        result = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert result.status == ExecutionStatus.REJECTED
         assert "Error evaluating precondition" in result.message
 
@@ -288,15 +288,15 @@ class TestEngine:
         )
 
         # 1st call: Success
-        res1 = engine.execute_intent(pid, intent)
+        res1 = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res1.status == ExecutionStatus.SUCCESS
 
         # 2nd call: Success
-        res2 = engine.execute_intent(pid, intent)
+        res2 = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res2.status == ExecutionStatus.SUCCESS
 
         # 3rd call: Should fail
-        res3 = engine.execute_intent(pid, intent)
+        res3 = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res3.status == ExecutionStatus.REJECTED
         assert "Rate limit exceeded" in res3.message
 
@@ -321,7 +321,7 @@ class TestEngine:
             ]
         )
         
-        results = engine.execute_plan(pid, plan)
+        results = engine.execute_plan(pid, plan, user_roles=["admin"])
         
         # Should have broken after first failure
         assert len(results) == 1
@@ -351,7 +351,7 @@ class TestEngine:
             ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="a", execution_mode=ExecutionMode.INTERACTIVE),
             ChatIntent(type=IntentType.ACTION_CALL, request_id="2", action_id="a", execution_mode=ExecutionMode.INTERACTIVE)
         ])
-        res = engine.execute_plan(pid, plan_interactive)
+        res = engine.execute_plan(pid, plan_interactive, user_roles=["admin"])
         assert len(res) == 1
         assert res[0].error.code == "plan_limit_exceeded"
 
@@ -376,7 +376,7 @@ class TestEngine:
         ])
 
         # Execute with simulate=True
-        results = engine.execute_plan(pid, plan, simulate=True)
+        results = engine.execute_plan(pid, plan, simulate=True, user_roles=["admin"])
         assert len(results) == 2
         assert results[0].simulated is True
         assert results[1].simulated is True
@@ -415,7 +415,7 @@ class TestEngine:
         )
         repo.set_project_limits(pid, {"limits": {"budget": {"daily": 5}}})
         
-        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.expensive"))
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.expensive"), user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert res.error.code == "budget_exceeded"
 
@@ -436,7 +436,7 @@ class TestEngine:
             handler=lambda i, s: ({"test.comp": {"v": i["v"]}}, [], "Set")
         )
         
-        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.set", inputs={"v": -1}))
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="test.set", inputs={"v": -1}), user_roles=["admin"])
         assert res.status == ExecutionStatus.FAILED
         assert res.error.code == "invariant_violation"
 
@@ -444,7 +444,7 @@ class TestEngine:
         engine, _, repo, pid = setup
         repo.set_project_limits(pid, {"execution_windows": {"allowed": [{"days": ["never"], "hours": ["00:00", "23:59"]}]}})
         
-        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1}))
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1}), user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert res.error.code == "execution_window_violation"
 
@@ -468,7 +468,7 @@ class TestEngine:
         repo.save_execution = MagicMock(side_effect=Exception("DB Error"))
         
         # Rejection path
-        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="missing"))
+        res = engine.execute_intent(pid, ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="missing"), user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
 
         # Failure path
@@ -501,10 +501,10 @@ class TestEngine:
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
         
         # 1st call: Success
-        assert engine.execute_intent(pid, intent).status == ExecutionStatus.SUCCESS
+        assert engine.execute_intent(pid, intent, user_roles=["admin"]).status == ExecutionStatus.SUCCESS
         
         # 2nd call: Should fail (hourly)
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert "Hourly rate limit exceeded" in res.message
 
@@ -518,7 +518,7 @@ class TestEngine:
             )
         )
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.FAILED
         assert res.error.code == "invariant_error"
 
@@ -527,7 +527,7 @@ class TestEngine:
         with patch.object(repo, 'save_execution', side_effect=Exception("DB Error")):
             intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="missing")
             # Should not crash
-            res = engine.execute_intent(pid, intent)
+            res = engine.execute_intent(pid, intent, user_roles=["admin"])
             assert res.status == ExecutionStatus.REJECTED
 
     def test_create_failure_db_error(self, setup):
@@ -537,7 +537,7 @@ class TestEngine:
             # Force a handler failure by mocking the handler ITSELF
             mock_handler = MagicMock(side_effect=Exception("Handler Fail"))
             with patch.object(engine.registry, 'get_handler', return_value=mock_handler):
-                res = engine.execute_intent(pid, intent)
+                res = engine.execute_intent(pid, intent, user_roles=["admin"])
                 assert res.status == ExecutionStatus.FAILED
 
     def test_revert_to_snapshot_missing_current(self, setup):
@@ -562,7 +562,7 @@ class TestEngine:
         # Autonomous mode: max 10 steps
         steps = [ChatIntent(type=IntentType.ACTION_CALL, request_id=str(i), action_id="a", execution_mode=ExecutionMode.AUTONOMOUS) for i in range(11)]
         plan_auto = ExecutionPlan(plan_id="p2", steps=steps)
-        res = engine.execute_plan(pid, plan_auto)
+        res = engine.execute_plan(pid, plan_auto, user_roles=["admin"])
         assert len(res) == 1
         assert res[0].error.code == "plan_limit_exceeded"
 
@@ -571,7 +571,7 @@ class TestEngine:
         repo.create_project(pid, "P1")
         repo.archive_project(pid)
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert res.error.code == "project_archived"
 
@@ -593,14 +593,14 @@ class TestEngine:
             )
         )
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1})
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.FAILED
         assert res.error.code == "invariant_error"
 
     def test_execute_missing_action_id_intent(self, setup):
         engine, _, _, pid = setup
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1")
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert "Missing action_id" in res.message
 
@@ -608,12 +608,12 @@ class TestEngine:
         engine, _, repo, pid = setup
         # Missing user_id
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="1", action_id="memory.remember", inputs={"key": "k", "value": "v"})
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.REJECTED
         assert "User ID required" in res.message
 
         # Simulation
-        res = engine.execute_intent(pid, intent, user_id="u1", simulate=True)
+        res = engine.execute_intent(pid, intent, user_id="u1", simulate=True, user_roles=["admin"])
         assert res.status == ExecutionStatus.SUCCESS
         assert res.simulated is True
 
@@ -626,7 +626,7 @@ class TestEngine:
         )
         registry._actions["no.handler"] = action
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="no.handler")
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.FAILED
         assert "No handler registered" in res.message
 
@@ -634,7 +634,7 @@ class TestEngine:
         engine, _, _, pid = setup
         media = IntentMedia(type="image", data="some-data", mime_type="image/png")
         intent = ChatIntent(type=IntentType.ACTION_CALL, request_id="r1", action_id="demo.counter.set", inputs={"value": 1}, media=media)
-        res = engine.execute_intent(pid, intent)
+        res = engine.execute_intent(pid, intent, user_roles=["admin"])
         assert res.status == ExecutionStatus.SUCCESS
         assert "media_hash" in res.metadata
         assert res.metadata["media_type"] == "image"

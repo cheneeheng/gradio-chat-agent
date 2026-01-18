@@ -109,3 +109,11 @@ class TestSchedulerWorker:
             worker._run()
             # If it didn't crash, it caught the error
             worker._sync_schedules.assert_called_once()
+
+    def test_scheduler_double_start(self, setup):
+        worker, _, _ = setup
+        worker.start()
+        t1 = worker._thread
+        worker.start()
+        assert worker._thread is t1
+        worker.stop()

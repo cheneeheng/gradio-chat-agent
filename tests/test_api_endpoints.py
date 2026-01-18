@@ -16,6 +16,7 @@ from gradio_chat_agent.models.component import (
 from gradio_chat_agent.models.enums import (
     ActionRisk,
     ActionVisibility,
+    ExecutionMode,
     ExecutionStatus,
     ProjectOp,
     MembershipOp,
@@ -341,19 +342,19 @@ class TestApiEndpoints:
         api, _, repo, _ = setup
         
         # Create
-        res = api.manage_project(ProjectOp.CREATE, name="New Project")
+        res = api.manage_project(ProjectOp.CREATE, name="New Project", user_id="admin")
         assert res["code"] == 0
         new_pid = res["data"]["project_id"]
         assert new_pid in repo._projects
         assert repo._projects[new_pid]["name"] == "New Project"
 
         # Archive
-        res = api.manage_project(ProjectOp.ARCHIVE, project_id=new_pid)
+        res = api.manage_project(ProjectOp.ARCHIVE, project_id=new_pid, user_id="admin")
         assert res["code"] == 0
         assert repo._projects[new_pid]["archived_at"] is not None
 
         # Purge
-        res = api.manage_project(ProjectOp.PURGE, project_id=new_pid)
+        res = api.manage_project(ProjectOp.PURGE, project_id=new_pid, user_id="admin", confirmed=True)
         assert res["code"] == 0
         assert new_pid not in repo._projects
 
@@ -450,10 +451,10 @@ class TestApiEndpoints:
 
     def test_manage_project_invalid(self, setup):
         api, _, _, pid = setup
-        assert api.manage_project(ProjectOp.CREATE, name=None)["code"] == 1
-        assert api.manage_project(ProjectOp.ARCHIVE, project_id=None)["code"] == 1
-        assert api.manage_project(ProjectOp.PURGE, project_id=None)["code"] == 1
-        assert api.manage_project("unknown")["code"] == 1
+        assert api.manage_project(ProjectOp.CREATE, name=None, user_id="admin")["code"] == 1
+        assert api.manage_project(ProjectOp.ARCHIVE, project_id=None, user_id="admin")["code"] == 1
+        assert api.manage_project(ProjectOp.PURGE, project_id=None, user_id="admin")["code"] == 1
+        assert api.manage_project("unknown", user_id="admin")["code"] == 1
 
     def test_manage_membership_invalid(self, setup):
         api, _, _, pid = setup
@@ -522,7 +523,7 @@ class TestApiEndpoints:
         repo._webhooks["static"] = {
             "id": "static", "enabled": True, "secret": "s",
             "project_id": pid, "action_id": "act",
-            "inputs_template": {"static": "value", "dynamic": "{{ val }}", "plain": "plain_text"}
+            "inputs_template": {"static": 123, "dynamic": "{{ val }}", "plain": "plain_text"}
         }
         
         # Mock execute_intent
@@ -550,7 +551,7 @@ class TestApiEndpoints:
         api.webhook_execute("static", payload_static, sig_static)
         args, kwargs = api.engine.execute_intent.call_args
         inputs = kwargs['intent'].inputs if 'intent' in kwargs else args[1].inputs
-        assert inputs == {"static": "value", "dynamic": 123, "plain": "plain_text"}
+        assert inputs == {"static": 123, "dynamic": 123, "plain": "plain_text"}
 
     def test_revert_invalid_snapshot(self, setup):
         api, _, _, pid = setup
@@ -587,3 +588,115 @@ class TestApiEndpoints:
         res = api.manage_schedule(ScheduleOp.DELETE, schedule_id=None)
         assert res["code"] == 1
         assert "Schedule ID required" in res["message"]
+
+    def test_execute_action_empty_mode(self, setup):
+        api, engine, _, pid = setup
+        engine.execute_intent = MagicMock(return_value=MagicMock(status="success", message="OK", model_dump=lambda **k: {}))
+        
+        api.execute_action(pid, "act", {}, mode="")
+        
+        args, kwargs = engine.execute_intent.call_args
+        assert kwargs["intent"].execution_mode == ExecutionMode.ASSISTED
+
+    def test_webhook_template_conversions(self, setup):
+        api, _, repo, pid = setup
+        webhook_id = "wh-conv"
+        repo._webhooks[webhook_id] = {
+            "id": webhook_id, "project_id": pid, "action_id": "act", "secret": "s", "enabled": True,
+            "inputs_template": {
+                "b_true": "{{ t }}", "b_false": "{{ f }}", 
+                "i_val": "{{ i }}", "f_val": "{{ fl }}",
+                "s_val": "{{ s }}"
+            }
+        }
+        
+        payload = {"t": "true", "f": "false", "i": "123", "fl": "12.34", "s": "hello"}
+        
+        # Mock HMAC
+        import hmac, hashlib, json
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        sig = hmac.new(b"s", payload_bytes, hashlib.sha256).hexdigest()
+        
+        # Mock execute
+        api.engine.execute_intent = MagicMock(return_value=MagicMock(status="success", message="OK", model_dump=lambda **k: {}))
+        
+        api.webhook_execute(webhook_id, payload, sig)
+        
+        args, kwargs = api.engine.execute_intent.call_args
+        inputs = kwargs["intent"].inputs
+        assert inputs["b_true"] is True
+        assert inputs["b_false"] is False
+        assert inputs["i_val"] == 123
+        assert inputs["f_val"] == 12.34
+        assert inputs["s_val"] == "hello"
+
+    def test_webhook_template_error(self, setup):
+        import hmac, hashlib
+        api, _, repo, pid = setup
+        webhook_id = "wh-err"
+        repo._webhooks[webhook_id] = {
+            "id": webhook_id, "project_id": pid, "action_id": "act", "secret": "s", "enabled": True,
+            "inputs_template": {"val": "{{ 1/0 }}"} # ZeroDivisionError in jinja? No, Jinja handles it differently usually, but let's try syntax error
+        }
+        repo._webhooks[webhook_id]["inputs_template"] = {"val": "{{ x }"} # Syntax Error
+        
+        payload = {}
+        payload_bytes = b"{}"
+        sig = hmac.new(b"s", payload_bytes, hashlib.sha256).hexdigest()
+        
+        res = api.webhook_execute(webhook_id, payload, sig)
+        assert res["code"] == 1
+        assert "Template rendering error" in res["message"]
+
+    def test_list_users_string_date(self, setup):
+        api, _, repo, _ = setup
+        repo._users["u1"] = {"id": "u1", "created_at": "2023-01-01T00:00:00"}
+        
+        res = api.list_users(user_id="admin")
+        assert res["data"][0]["created_at"] == "2023-01-01T00:00:00"
+
+    def test_delete_user_permission_denied(self, setup):
+        api, _, _, _ = setup
+        res = api.delete_user("u1", user_id="viewer")
+        assert res["code"] == 1
+        assert "Permission denied" in res["message"]
+
+    def test_simulate_action_none_inputs(self, setup):
+        api, engine, _, pid = setup
+        engine.execute_intent = MagicMock(return_value=MagicMock(status="success", message="OK", model_dump=lambda **k: {}))
+        api.simulate_action(pid, "act", None)
+        args, kwargs = engine.execute_intent.call_args
+        assert kwargs["intent"].inputs == {}
+
+    def test_manage_project_edge_cases(self, setup):
+        api, _, _, _ = setup
+        
+        # Not admin
+        res = api.manage_project(ProjectOp.CREATE, name="p", user_id="user")
+        assert res["code"] == 1
+        assert "Permission denied" in res["message"]
+        
+        # Archive missing project_id
+        res = api.manage_project(ProjectOp.ARCHIVE, project_id=None, user_id="admin")
+        assert res["code"] == 1
+        assert "Project ID required" in res["message"]
+        
+        # Purge missing project_id
+        res = api.manage_project(ProjectOp.PURGE, project_id=None, user_id="admin")
+        assert res["code"] == 1
+        assert "Project ID required" in res["message"]
+        
+        # Unknown op
+        # We need to bypass the Enum type check if using python enum, but the method type hint says ProjectOp.
+        # However, passing a string that isn't in Enum might fail Pydantic validation if strictly typed, 
+        # but here it's a method argument. 
+        # If I pass a string "unknown", it won't equal any ProjectOp member.
+        res = api.manage_project("unknown", user_id="admin")
+        assert res["code"] == 1
+        assert "Unknown operation" in res["message"]
+
+    def test_budget_forecast(self, setup):
+        api, _, _, pid = setup
+        # Just check it calls the service and returns data
+        res = api.budget_forecast(pid)
+        assert "status" in res["data"]

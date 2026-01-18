@@ -93,6 +93,9 @@ def test_app_health_endpoint_failure():
         def list_enabled_schedules(self): pass
         def get_project_members(self, pid): pass
         def check_health(self): return False
+        def delete_user(self, uid): pass
+        def get_user(self, uid): pass
+        def list_users(self): pass
 
     app = FastAPI()
     repository = BrokenRepo()
