@@ -674,24 +674,76 @@ class ApiEndpoints:
             ]
         ).model_dump(mode="json")
 
-    def delete_user(
-        self, target_user_id: str, user_id: str | None = None
-    ) -> dict[str, Any]:
-        """Deletes a user from the system.
+        def delete_user(
 
-        Args:
-            target_user_id: The ID of the user to delete.
-            user_id: ID of the user performing the operation.
+            self, target_user_id: str, user_id: str | None = None
 
-        Returns:
-            Result wrapped in ApiResponse.
-        """
-        if not self._is_system_admin(user_id):
-            return ApiResponse(
-                code=1, message="Permission denied: System Admin required"
-            ).model_dump(mode="json")
+        ) -> dict[str, Any]:
 
-        self.engine.repository.delete_user(target_user_id)
-        return ApiResponse(
-            message=f"User {target_user_id} deleted"
-        ).model_dump(mode="json")
+            """Deletes a user from the system.
+
+    
+
+            Args:
+
+                target_user_id: The ID of the user to delete.
+
+                user_id: ID of the user performing the operation.
+
+    
+
+            Returns:
+
+                Result wrapped in ApiResponse.
+
+            """
+
+            if not self._is_system_admin(user_id):
+
+                return ApiResponse(
+
+                    code=1, message="Permission denied: System Admin required"
+
+                ).model_dump(mode="json")
+
+    
+
+            self.engine.repository.delete_user(target_user_id)
+
+            return ApiResponse(message=f"User {target_user_id} deleted").model_dump(
+
+                mode="json"
+
+            )
+
+    
+
+        def budget_forecast(self, project_id: str) -> dict[str, Any]:
+
+            """Returns budget usage stats and exhaustion predictions for a project.
+
+    
+
+            Args:
+
+                project_id: The target project ID.
+
+    
+
+            Returns:
+
+                Forecast data wrapped in ApiResponse.
+
+            """
+
+            from gradio_chat_agent.execution.forecasting import ForecastingService
+
+    
+
+            service = ForecastingService(self.engine)
+
+            forecast = service.get_budget_forecast(project_id)
+
+            return ApiResponse(data=forecast).model_dump(mode="json")
+
+    

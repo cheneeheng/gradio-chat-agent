@@ -60,7 +60,7 @@
 - [x] **Side Effect Dispatcher:**
   - [x] **Hook System:** Implement a `post_execution` hook in the `ExecutionEngine` to trigger external actions (e.g., API calls) only after state is successfully committed.
   - [x] **Replay Safety:** Implement a global `execution_context` or mode flag to ensure side effects are strictly suppressed during "Replay" or "Simulation" paths.
-  - **Async Observers:** Design a background observer pattern that polls the audit log for successful mutations to trigger long-running or unreliable external tasks asynchronously.
+  - [x] **Async Observers:** Design a background observer pattern that polls the audit log for successful mutations to trigger long-running or unreliable external tasks asynchronously.
 - [x] **Task Retries:** Add retry logic and error handling for failed scheduled tasks and webhook triggers.
 
 ## 6. Component Ecosystem
@@ -94,7 +94,7 @@
   - `budget_consumption_total` (Counter for abstract cost)
   - `llm_token_usage_total` (Counter for model tokens)
   - `active_projects` (Gauge)
-- [ ] **Forecasting Service:** Implement a background job to analyze historical execution data and predict project budget exhaustion.
+- [x] **Forecasting Service:** Implement a background job to analyze historical execution data and predict project budget exhaustion.
 - [ ] **Operational Alerting:** Create a system to trigger alerts (e.g., via system webhooks or Prometheus rules) for:
   - High Failure Rates (e.g., >5% failure rate over 5 minutes)
   - LLM Latency Quantiles (e.g., P95 duration > 10 seconds)
@@ -111,10 +111,10 @@
 
 ## 10. Secrets Management & Security
 
-- [ ] **Encryption:** Implement encryption for sensitive data at rest (e.g., Webhook secrets) in the `SQLStateRepository`.
+- [x] **Encryption:** Implement encryption for sensitive data at rest (e.g., Webhook secrets) in the `SQLStateRepository`.
 - [ ] **Secret Rotation:** Add API endpoints to rotate secrets for webhooks and other credentials.
 - [ ] **Bearer Token Lifecycle:** Implement logic for Admins to generate, list, and revoke API Bearer Tokens, moving beyond the hardcoded "admin" role for headless access.
-- [ ] **CORS Configuration:** Integrate `GRADIO_ALLOWED_ORIGINS` into the server launch logic to allow secure cross-origin automation as specified in the documentation.
+- [x] **CORS Configuration:** Integrate `GRADIO_ALLOWED_ORIGINS` into the server launch logic to allow secure cross-origin automation as specified in the documentation.
 - [ ] **State Integrity Verification:** Implement a checksum/hashing system for state snapshots to detect and alert on unauthorized modifications.
 
 ## 11. Identity & Access (OIDC)
@@ -136,7 +136,7 @@
 ## 13. Infrastructure & Scaling
 
 - [ ] **Transactional Atomicity:** Update the `ExecutionEngine` and `SQLStateRepository` to ensure that the creation of a new `StateSnapshot` and the recording of the `ExecutionResult` occur within a single database transaction.
-- [ ] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
+- [x] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
 - [ ] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
 - [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
 - [ ] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments.

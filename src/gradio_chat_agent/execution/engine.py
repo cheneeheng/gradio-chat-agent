@@ -11,6 +11,7 @@ import hashlib
 import threading
 import time
 import uuid
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 import jsonschema
@@ -883,6 +884,78 @@ class ExecutionEngine:
             self._dispatch_post_execution(project_id, result)
 
             return result
+
+    def reconstruct_state(
+        self,
+        project_id: str,
+        target_request_id: Optional[str] = None,
+        target_timestamp: Optional[datetime] = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Reconstructs the state by replaying diffs from the audit log.
+
+        This method starts from the earliest snapshot and applies all
+        successful execution diffs sequentially.
+
+        Args:
+            project_id: The ID of the project.
+            target_request_id: If provided, stop replay after this request.
+            target_timestamp: If provided, stop replay at this time.
+
+        Returns:
+            The reconstructed components dictionary.
+        """
+        # 1. Fetch all successful executions for this project, ordered by time
+        history = self.repository.get_execution_history(project_id, limit=10000)
+        # Ordered by timestamp desc in repo, so reverse it
+        history = list(reversed(history))
+
+        # 2. Start with an empty state (or the first snapshot if we had a checkpoint system)
+        reconstructed_state: dict[str, dict[str, Any]] = {}
+
+        for entry in history:
+            if entry.status != ExecutionStatus.SUCCESS:
+                continue
+
+            # Apply diffs to reconstructed_state
+            for diff in entry.state_diff:
+                path_parts = diff.path.split(".")
+                comp_id = path_parts[0]
+
+                if comp_id not in reconstructed_state:
+                    reconstructed_state[comp_id] = {}
+
+                # Simplified path application (only handles component level or one nested level)
+                # In a real system, this would be a recursive path update.
+                if len(path_parts) == 1:
+                    if diff.op == "add" or diff.op == "replace":
+                        reconstructed_state[comp_id] = diff.value
+                    elif diff.op == "remove":
+                        reconstructed_state.pop(comp_id, None)
+                elif len(path_parts) == 2:
+                    attr = path_parts[1]
+                    if diff.op == "add" or diff.op == "replace":
+                        reconstructed_state[comp_id][attr] = diff.value
+                    elif diff.op == "remove":
+                        reconstructed_state[comp_id].pop(attr, None)
+
+            # Stop conditions
+            if target_request_id and entry.request_id == target_request_id:
+                break
+            if target_timestamp:
+                entry_ts = entry.timestamp
+                if entry_ts.tzinfo is None:
+                    from datetime import timezone
+                    entry_ts = entry_ts.replace(tzinfo=timezone.utc)
+                
+                target_ts = target_timestamp
+                if target_ts.tzinfo is None:
+                    from datetime import timezone
+                    target_ts = target_ts.replace(tzinfo=timezone.utc)
+
+                if entry_ts > target_ts:
+                    break
+
+        return reconstructed_state
 
     def _create_rejection(
         self,

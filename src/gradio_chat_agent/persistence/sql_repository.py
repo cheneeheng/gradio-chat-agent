@@ -26,6 +26,7 @@ from gradio_chat_agent.persistence.models import (
     Webhook,
 )
 from gradio_chat_agent.persistence.repository import StateRepository
+from gradio_chat_agent.utils import SecretManager
 
 
 class SQLStateRepository(StateRepository):
@@ -41,6 +42,7 @@ class SQLStateRepository(StateRepository):
         # In a real prod env, use Alembic. For now, auto-create.
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
+        self.secrets = SecretManager()
 
         # Ensure default project exists
         self._ensure_project("default_project")
@@ -331,13 +333,14 @@ class SQLStateRepository(StateRepository):
             The number of successful executions found in the specified window.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        cutoff_naive = cutoff.replace(tzinfo=None)
         with self.SessionLocal() as session:
             stmt = (
                 select(func.count())
                 .select_from(Execution)
                 .where(
                     Execution.project_id == project_id,
-                    Execution.timestamp >= cutoff.replace(tzinfo=None),
+                    Execution.timestamp >= cutoff_naive,
                     Execution.status == "success",
                 )
             )
@@ -384,11 +387,19 @@ class SQLStateRepository(StateRepository):
             webhook = session.get(Webhook, webhook_id)
             if not webhook:
                 return None
+            
+            # Decrypt secret
+            try:
+                secret = self.secrets.decrypt(webhook.secret)
+            except Exception:
+                # Fallback for plain text if migration just started
+                secret = webhook.secret
+
             return {
                 "id": webhook.id,
                 "project_id": webhook.project_id,
                 "action_id": webhook.action_id,
-                "secret": webhook.secret,
+                "secret": secret,
                 "inputs_template": webhook.inputs_template,
                 "enabled": webhook.enabled,
             }
@@ -402,10 +413,12 @@ class SQLStateRepository(StateRepository):
         with self.SessionLocal() as session:
             self._ensure_project(webhook["project_id"])
 
+            encrypted_secret = self.secrets.encrypt(webhook["secret"])
+
             db_webhook = session.get(Webhook, webhook["id"])
             if db_webhook:
                 db_webhook.action_id = webhook["action_id"]
-                db_webhook.secret = webhook["secret"]
+                db_webhook.secret = encrypted_secret
                 db_webhook.inputs_template = webhook.get("inputs_template")
                 db_webhook.enabled = webhook.get("enabled", True)
             else:
@@ -413,7 +426,7 @@ class SQLStateRepository(StateRepository):
                     id=webhook["id"],
                     project_id=webhook["project_id"],
                     action_id=webhook["action_id"],
-                    secret=webhook["secret"],
+                    secret=encrypted_secret,
                     inputs_template=webhook.get("inputs_template"),
                     enabled=webhook.get("enabled", True),
                 )

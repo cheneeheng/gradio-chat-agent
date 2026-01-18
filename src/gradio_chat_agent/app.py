@@ -122,6 +122,18 @@ def main():
     # 6. Create FastAPI App and mount everything
     app = FastAPI()
 
+    # --- CORS Configuration ---
+    allowed_origins = os.environ.get("GRADIO_ALLOWED_ORIGINS", "*").split(",")
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/metrics")
     def metrics():
         return Response(

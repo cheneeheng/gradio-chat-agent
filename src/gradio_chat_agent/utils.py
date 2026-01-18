@@ -4,13 +4,54 @@ This module provides shared helper functions used across the application,
 such as diff computation and common transformations.
 """
 
+import os
 import base64
 import hashlib
 import mimetypes
-from typing import Any
+from typing import Any, Optional
 
 from gradio_chat_agent.models.enums import StateDiffOp
 from gradio_chat_agent.models.execution_result import StateDiffEntry
+
+
+class SecretManager:
+    """Utility for encrypting and decrypting sensitive data."""
+
+    def __init__(self, key: Optional[str] = None):
+        """Initializes with a base64 encoded Fernet key.
+
+        Args:
+            key: Optional key. If not provided, looks for SECRET_KEY env var.
+        """
+        from cryptography.fernet import Fernet
+
+        secret = key or os.environ.get("SECRET_KEY")
+        if not secret:
+            # Fallback for dev only
+            secret = base64.urlsafe_b64encode(
+                b"static-dev-key-must-be-32-bytes!!"
+            )
+
+        # Ensure key is correctly padded/formatted for Fernet
+        if isinstance(secret, str):
+            secret = secret.encode("utf-8")
+
+        try:
+            self.fernet = Fernet(secret)
+        except Exception:
+            # If key is invalid format, derive one from the string
+            derived_key = base64.urlsafe_b64encode(
+                hashlib.sha256(secret).digest()
+            )
+            self.fernet = Fernet(derived_key)
+
+    def encrypt(self, plain_text: str) -> str:
+        """Encrypts a string."""
+        return self.fernet.encrypt(plain_text.encode("utf-8")).decode("utf-8")
+
+    def decrypt(self, cipher_text: str) -> str:
+        """Decrypts a string."""
+        return self.fernet.decrypt(cipher_text.encode("utf-8")).decode("utf-8")
 
 
 def hash_password(password: str) -> str:

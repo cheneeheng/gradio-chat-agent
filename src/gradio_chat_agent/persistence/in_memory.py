@@ -287,12 +287,14 @@ class InMemoryStateRepository(StateRepository):
         """
         history = self._executions.get(project_id, [])
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
-        # Ensure cutoff is naive if timestamps are naive
-        cutoff = cutoff.replace(tzinfo=None)
 
         count = 0
         for ex in history:
-            if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
+            ex_ts = ex.timestamp
+            if ex_ts.tzinfo is None:
+                ex_ts = ex_ts.replace(tzinfo=timezone.utc)
+
+            if ex_ts >= cutoff and ex.status == ExecutionStatus.SUCCESS:
                 count += 1
         return count
 
@@ -308,12 +310,15 @@ class InMemoryStateRepository(StateRepository):
         history = self._executions.get(project_id, [])
         now = datetime.now(timezone.utc)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Ensure cutoff is naive if timestamps are naive
-        cutoff = midnight.replace(tzinfo=None)
+        cutoff = midnight
 
         total_cost = 0.0
         for ex in history:
-            if ex.timestamp >= cutoff and ex.status == ExecutionStatus.SUCCESS:
+            ex_ts = ex.timestamp
+            if ex_ts.tzinfo is None:
+                ex_ts = ex_ts.replace(tzinfo=timezone.utc)
+
+            if ex_ts >= cutoff and ex.status == ExecutionStatus.SUCCESS:
                 total_cost += float(ex.metadata.get("cost", 0.0))
         return total_cost
 
