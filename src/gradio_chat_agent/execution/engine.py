@@ -29,6 +29,13 @@ from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 from gradio_chat_agent.observability.logging import get_logger
+from gradio_chat_agent.observability.metrics import (
+    ACTIVE_PROJECTS,
+    BUDGET_CONSUMPTION_TOTAL,
+    ENGINE_EXECUTION_DURATION_SECONDS,
+    ENGINE_EXECUTION_TOTAL,
+)
+from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
 from gradio_chat_agent.utils import compute_state_diff
@@ -695,6 +702,20 @@ class ExecutionEngine:
                 metadata=metadata,
             )
 
+            # Metrics
+            ENGINE_EXECUTION_DURATION_SECONDS.labels(
+                action_id=intent.action_id
+            ).observe(result.execution_time_ms / 1000.0)
+            ENGINE_EXECUTION_TOTAL.labels(
+                status="success",
+                action_id=intent.action_id,
+                project_id=project_id,
+            ).inc()
+            if not simulate:
+                BUDGET_CONSUMPTION_TOTAL.labels(
+                    project_id=project_id
+                ).inc(action_cost)
+
             logger.info(
                 f"Execution successful: {intent.action_id}",
                 extra={
@@ -831,6 +852,13 @@ class ExecutionEngine:
             cost=cost,
         )
 
+        # Metrics
+        ENGINE_EXECUTION_TOTAL.labels(
+            status="rejected",
+            action_id=intent.action_id or "unknown",
+            project_id=project_id,
+        ).inc()
+
         logger.warning(
             f"Execution rejected: {message}",
             extra={
@@ -892,6 +920,13 @@ class ExecutionEngine:
             execution_time_ms=execution_time_ms,
             cost=cost,
         )
+
+        # Metrics
+        ENGINE_EXECUTION_TOTAL.labels(
+            status="failed",
+            action_id=intent.action_id or "unknown",
+            project_id=project_id,
+        ).inc()
 
         logger.error(
             f"Execution failed: {message}",

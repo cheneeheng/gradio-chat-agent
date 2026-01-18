@@ -340,6 +340,15 @@ class StateRepository(ABC):
         pass  # pragma: no cover
 
     @abstractmethod
+    def list_enabled_schedules(self) -> list[dict[str, Any]]:
+        """Lists all enabled schedules across all projects.
+
+        Returns:
+            A list of schedule dictionaries.
+        """
+        pass  # pragma: no cover
+
+    @abstractmethod
     def get_project_members(self, project_id: str) -> list[dict[str, str]]:
         """Retrieves all members of a project.
 

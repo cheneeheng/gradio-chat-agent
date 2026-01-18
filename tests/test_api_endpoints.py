@@ -1,4 +1,7 @@
 import uuid
+import hmac
+import hashlib
+import json
 from unittest.mock import MagicMock
 import pytest
 from gradio_chat_agent.api.endpoints import ApiEndpoints
@@ -249,8 +252,17 @@ class TestApiEndpoints:
         }
 
         payload = {"value": 99}
+        
+        # Calculate correct HMAC signature
+        import hmac
+        import hashlib
+        import json
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        signature = hmac.new(
+            secret.encode("utf-8"), payload_bytes, hashlib.sha256
+        ).hexdigest()
 
-        result = api.webhook_execute(webhook_id, payload, signature=secret)
+        result = api.webhook_execute(webhook_id, payload, signature=signature)
 
         assert result["code"] == 0
         assert result["data"]["status"] == ExecutionStatus.SUCCESS
@@ -519,7 +531,11 @@ class TestApiEndpoints:
         ))
         
         # Test pass through
-        api.webhook_execute("passthrough", {"foo": "bar"}, "s")
+        payload_passthrough = {"foo": "bar"}
+        payload_bytes = json.dumps(payload_passthrough, sort_keys=True).encode("utf-8")
+        sig_passthrough = hmac.new(b"s", payload_bytes, hashlib.sha256).hexdigest()
+        
+        api.webhook_execute("passthrough", payload_passthrough, sig_passthrough)
         args, kwargs = api.engine.execute_intent.call_args
         if 'intent' in kwargs:
             assert kwargs['intent'].inputs == {"foo": "bar"}
@@ -527,7 +543,11 @@ class TestApiEndpoints:
             assert args[1].inputs == {"foo": "bar"}
         
         # Test static/dynamic mix - hitting the "else" branch for plain strings
-        api.webhook_execute("static", {"val": 123}, "s")
+        payload_static = {"val": 123}
+        payload_bytes = json.dumps(payload_static, sort_keys=True).encode("utf-8")
+        sig_static = hmac.new(b"s", payload_bytes, hashlib.sha256).hexdigest()
+        
+        api.webhook_execute("static", payload_static, sig_static)
         args, kwargs = api.engine.execute_intent.call_args
         inputs = kwargs['intent'].inputs if 'intent' in kwargs else args[1].inputs
         assert inputs == {"static": "value", "dynamic": 123, "plain": "plain_text"}

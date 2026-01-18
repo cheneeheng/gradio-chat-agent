@@ -53,3 +53,12 @@ def test_get_logger():
     logger = get_logger("my_name")
     assert logger.name == "my_name"
     assert isinstance(logger, logging.Logger)
+
+def test_metrics_collection():
+    from gradio_chat_agent.observability.metrics import ENGINE_EXECUTION_TOTAL, get_metrics_content
+    
+    ENGINE_EXECUTION_TOTAL.labels(status="success", action_id="test", project_id="p1").inc()
+    
+    content = get_metrics_content()
+    assert "engine_execution_total" in content
+    assert 'status="success"' in content

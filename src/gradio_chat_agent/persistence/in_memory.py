@@ -80,6 +80,14 @@ class InMemoryStateRepository(StateRepository):
             return [v for v in self._webhooks.values() if v.get("project_id") == project_id]
         return list(self._webhooks.values())
 
+    def list_enabled_schedules(self) -> list[dict[str, Any]]:
+        """Lists all enabled schedules across all projects.
+
+        Returns:
+            A list of schedule dictionaries.
+        """
+        return [v for v in self._schedules.values() if v.get("enabled", True)]
+
     def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
         """Retrieves the most recent state snapshot for a project.
 

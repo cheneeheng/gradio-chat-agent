@@ -34,8 +34,8 @@
 - [x] **Custom Theme:** Create `src/gradio_chat_agent/ui/theme.py` using Gradio's `Theme` class to establish a consistent brand identity (colors, fonts, spacing).
 - [x] **CSS Styling:** Inject custom CSS into the `gr.Blocks` layout to refine the appearance of Chatbot bubbles, Plan Preview blocks, and state JSON viewers.
 - [ ] **Session Token Management:** Update the UI state to include `session_token` handling for future authenticated OIDC requests.
-- [ ] **Raw Trace Inspectors:** Add specialized tabs in the State Inspector to display the raw JSON of the last `ChatIntent` and `ExecutionResult` for developer debugging.
-- [ ] **Visual Action Feedback:** Implement "Success/Failure" animations or status indicators directly on the components in the State Inspector.
+- [x] **Raw Trace Inspectors:** Add specialized tabs in the State Inspector to display the raw JSON of the last `ChatIntent` and `ExecutionResult` for developer debugging.
+- [x] **Visual Action Feedback:** Implement "Success/Failure" animations or status indicators directly on the components in the State Inspector.
 
 ## 4. Governance & Policy Enforcement
 
@@ -53,10 +53,10 @@
 
 ## 5. Automation & Background Tasks
 
-- [ ] **Scheduler Worker:** Implement a background process (e.g., using `APScheduler` or a simple loop) to trigger actions defined in the `Schedule` model.
-- [ ] **Schedule Execution Identity:** Ensure scheduled tasks execute using a dedicated "System" user identity with appropriate permissions.
-- [ ] **Webhook Signature Verification:** Implement secure HMAC-SHA256 verification (e.g., `X-Hub-Signature`) for incoming webhooks using the registered secret.
-- [ ] **Jinja2 Webhook Templating:** Replace basic key substitution in `webhook_execute` with a full Jinja2 environment for mapping complex payloads to action inputs.
+- [x] **Scheduler Worker:** Implement a background process (e.g., using `APScheduler` or a simple loop) to trigger actions defined in the `Schedule` model.
+- [x] **Schedule Execution Identity:** Ensure scheduled tasks execute using a dedicated "System" user identity with appropriate permissions.
+- [x] **Webhook Signature Verification:** Implement secure HMAC-SHA256 verification (e.g., `X-Hub-Signature`) for incoming webhooks using the registered secret.
+- [x] **Jinja2 Webhook Templating:** Replace basic key substitution in `webhook_execute` with a full Jinja2 environment for mapping complex payloads to action inputs.
 - [ ] **Side Effect Dispatcher:**
   - **Hook System:** Implement a `post_execution` hook in the `ExecutionEngine` to trigger external actions (e.g., API calls) only after state is successfully committed.
   - **Replay Safety:** Implement a global `execution_context` or mode flag to ensure side effects are strictly suppressed during "Replay" or "Simulation" paths.
@@ -88,7 +88,7 @@
 - [x] **Log Traceability:** Ensure every application log entry includes the `component`, `event`, `request_id`, and `project_id` for easy correlation between operational logs and the authoritative Audit Log.
 - [x] **Full Intent Logging:** Update the `Execution` model and `SQLStateRepository` to store the full intent object (including action inputs and metadata) for every attempt, as required by the protocol for auditability and replay.
 - [x] **Execution Metadata:** Add `execution_time`, `cost`, and `user_id` attribution to the `Execution` model for detailed resource accounting.
-- [ ] **Prometheus Metrics Suite:** Implement a `/metrics` endpoint and instrument the application for the following indicators:
+- [x] **Prometheus Metrics Suite:** Implement a `/metrics` endpoint and instrument the application for the following indicators:
   - `engine_execution_total` (Counter with status/action labels)
   - `engine_execution_duration_seconds` (Histogram for latency)
   - `budget_consumption_total` (Counter for abstract cost)

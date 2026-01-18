@@ -27,3 +27,21 @@ The Gradio Chat Agent distinguishes between these two concepts based on their sc
 | **Versioning** | Yes (Snapshots & Diffs) | No (Current Value Only) |
 | **Agent Access**| Via Actions (`remember`/`forget`) | Direct Repo Access |
 | **Primary Use**| Active context for the conversation | Long-term user data / Preferences |
+
+## How does the Agent handle automated tasks or background jobs?
+
+Automated tasks are managed by the **Scheduler Worker**, which allows for non-interactive state mutations based on time (Cron expressions).
+
+*   **Engine Integration:** The scheduler polls the persistence layer for enabled schedules and registers them with an internal `APScheduler` instance.
+*   **System Identity:** Actions triggered by the scheduler execute using a dedicated **"System" user** (`system_scheduler`) with `admin` permissions. This ensures they can bypass interactive confirmation gates while remaining fully auditable.
+*   **Traceability:** Scheduled executions are recorded in the standard Audit Log with a special `trace` metadata indicating they were triggered by a schedule.
+
+## Where can I find system metrics, and are they user-specific?
+
+The application exposes operational metrics for infrastructure-level monitoring (e.g., Prometheus/Grafana).
+
+*   **Metrics Endpoint:** Metrics are served in Prometheus format at the `/metrics` endpoint. This is made possible by mounting the Gradio UI inside a **FastAPI** application.
+*   **Global/Project Scope:** Metrics (like execution counts, latency, and budget usage) are aggregated at the **Global** or **Project** level.
+*   **Cardinality Control:** Metrics are **not** user-specific by design. Adding individual `user_id` labels to time-series data would lead to "metric explosion" (high cardinality), which degrades the performance of monitoring systems.
+*   **User Attribution:** For detailed per-user accounting or security audits, you should refer to the **Audit Log** (SQL) or the **Structured Logs** (JSONL), which are designed to handle high-cardinality data efficiently.
+

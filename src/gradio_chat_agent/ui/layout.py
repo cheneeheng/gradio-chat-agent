@@ -24,6 +24,11 @@ from gradio_chat_agent.utils import encode_media
 DEFAULT_PROJECT_ID = "default_project"
 DEFAULT_USER_ID = "admin_user"
 
+STATUS_SUCCESS_HTML = '<div style="color: green; font-size: 1.2rem;">✅ Success</div>'
+STATUS_PENDING_HTML = '<div style="color: orange; font-size: 1.2rem;">⏳ Pending Approval</div>'
+STATUS_FAILED_HTML = '<div style="color: red; font-size: 1.2rem;">❌ Failed/Rejected</div>'
+STATUS_READY_HTML = '<div style="color: gray; font-size: 1.2rem;">🟢 Ready</div>'
+
 CUSTOM_CSS = """
 /* Enhance Chatbot Bubbles */
 .message.user {
@@ -93,6 +98,9 @@ class UIController:
             reg_info,
             facts_data,
             members_data,
+            {}, # last_intent
+            {}, # last_result
+            STATUS_READY_HTML,
         )
 
     def on_add_fact(self, pid: str, uid: str, key: str, val: str):
@@ -198,9 +206,13 @@ class UIController:
                 gr.update(),
                 gr.update(visible=False),
                 None,
+                {}, # last_intent
+                {}, # last_result
+                STATUS_FAILED_HTML,
             )
 
         # 4. Handle Result
+        last_intent_json = result.model_dump(mode="json") if result else {}
         if isinstance(result, ExecutionPlan):
             plan_md = f"## Proposed Plan (ID: {result.plan_id})\n"
             for i, step in enumerate(result.steps):
@@ -221,6 +233,9 @@ class UIController:
                 plan_md,
                 gr.update(visible=True),
                 result,
+                last_intent_json,
+                {}, # last_result
+                STATUS_PENDING_HTML,
             )
 
         elif isinstance(result, ChatIntent):
@@ -237,12 +252,16 @@ class UIController:
                     "No plan pending.",
                     gr.update(visible=False),
                     None,
+                    last_intent_json,
+                    {}, # last_result
+                    STATUS_READY_HTML,
                 )
 
             elif intent.type == IntentType.ACTION_CALL:
                 exec_result = self.engine.execute_intent(
                     pid, intent, user_roles=[user_role], user_id=uid
                 )
+                last_result_json = exec_result.model_dump(mode="json")
 
                 if exec_result.status == "success":
                     resp = f"Executed `{intent.action_id}`.\n\nResult: {exec_result.message}"
@@ -261,6 +280,9 @@ class UIController:
                         "No plan pending.",
                         gr.update(visible=False),
                         None,
+                        last_intent_json,
+                        last_result_json,
+                        STATUS_SUCCESS_HTML,
                     )
 
                 elif (
@@ -277,6 +299,9 @@ class UIController:
                         "No plan pending.",
                         gr.update(visible=False),
                         None,
+                        last_intent_json,
+                        last_result_json,
+                        STATUS_PENDING_HTML,
                     )
 
                 elif exec_result.status == ExecutionStatus.PENDING_APPROVAL:
@@ -290,6 +315,9 @@ class UIController:
                         "No plan pending.",
                         gr.update(visible=False),
                         None,
+                        last_intent_json,
+                        last_result_json,
+                        STATUS_PENDING_HTML,
                     )
 
                 else:
@@ -303,6 +331,9 @@ class UIController:
                         "No plan pending.",
                         gr.update(visible=False),
                         None,
+                        last_intent_json,
+                        last_result_json,
+                        STATUS_FAILED_HTML,
                     )
 
         return (
@@ -313,6 +344,9 @@ class UIController:
             "No plan pending.",
             gr.update(visible=False),
             None,
+            {}, # last_intent
+            {}, # last_result
+            STATUS_READY_HTML,
         )
 
     def on_approve_plan(self, plan, history, pid, uid):
@@ -325,6 +359,9 @@ class UIController:
                 "No plan",
                 gr.update(visible=False),
                 None,
+                {},  # last_intent
+                {},  # last_result
+                STATUS_READY_HTML,
             )
 
         # Determine user role
@@ -352,6 +389,9 @@ class UIController:
         snapshot = self.engine.repository.get_latest_snapshot(pid)
         new_state = snapshot.components if snapshot else {}
 
+        last_intent_json = plan.model_dump(mode="json")
+        last_result_json = [res.model_dump(mode="json") for res in results]
+
         return (
             history,
             new_state,
@@ -359,12 +399,25 @@ class UIController:
             "Plan Executed.",
             gr.update(visible=False),
             None,
+            last_intent_json,
+            last_result_json,
+            STATUS_SUCCESS_HTML,
         )
 
     def on_reject_plan(self, history):
         """Handler for rejecting a pending plan."""
         history.append({"role": "assistant", "content": "Plan rejected."})
-        return history, "Plan rejected.", gr.update(visible=False), None
+        return (
+            history,
+            {},  # state_json (no change)
+            {},  # diff_json (no change)
+            "Plan rejected.",  # plan_display
+            gr.update(visible=False),  # plan_group
+            None,  # pending_plan_state
+            {},  # last_intent
+            {},  # last_result
+            STATUS_READY_HTML,
+        )
 
 
 def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
@@ -405,6 +458,8 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                     label="Execution Mode",
                 )
                 user_info = gr.Markdown(f"**User:** {DEFAULT_USER_ID} (Admin)")
+
+                status_indicator = gr.HTML(STATUS_READY_HTML, label="System Status")
 
                 reset_btn = gr.Button(
                     "Reset State (Debug)", variant="secondary"
@@ -448,6 +503,18 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             label="Last Action Diff",
                             elem_classes="json-viewer",
                         )
+                    with gr.Tab("Trace"):
+                        with gr.Tabs():
+                            with gr.Tab("Last Intent"):
+                                intent_json = gr.JSON(
+                                    label="Last Intent",
+                                    elem_classes="json-viewer",
+                                )
+                            with gr.Tab("Last Result"):
+                                result_json = gr.JSON(
+                                    label="Last Execution Result",
+                                    elem_classes="json-viewer",
+                                )
                     with gr.Tab("Registry"):
                         registry_json = gr.JSON(
                             label="Available Actions",
@@ -515,7 +582,16 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
         demo.load(
             controller.refresh_ui,
             inputs=[project_id_state, user_id_state],
-            outputs=[state_json, diff_json, registry_json, memory_df, team_df],
+            outputs=[
+                state_json,
+                diff_json,
+                registry_json,
+                memory_df,
+                team_df,
+                intent_json,
+                result_json,
+                status_indicator,
+            ],
         )
 
         # Chat
@@ -536,6 +612,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 plan_display,
                 plan_group,
                 pending_plan_state,
+                intent_json,
+                result_json,
+                status_indicator,
             ],
         )
         msg_input.submit(
@@ -555,6 +634,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 plan_display,
                 plan_group,
                 pending_plan_state,
+                intent_json,
+                result_json,
+                status_indicator,
             ],
         )
 
@@ -574,12 +656,10 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 plan_display,
                 plan_group,
                 pending_plan_state,
+                intent_json,
+                result_json,
+                status_indicator,
             ],
-        )
-        reject_plan_btn.click(
-            controller.on_reject_plan,
-            inputs=[chatbot],
-            outputs=[chatbot, plan_display, plan_group, pending_plan_state],
         )
 
         # Memory Handlers

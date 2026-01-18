@@ -3,6 +3,8 @@
 This module defines the logic for the headless API endpoints exposed via Gradio.
 """
 
+import hmac
+import hashlib
 import uuid
 from typing import Any
 
@@ -254,31 +256,54 @@ class ApiEndpoints:
                 mode="json"
             )
 
-        # 2. Verify Signature (Simplification: exact match with secret)
-        # In production, use HMAC-SHA256 of the raw body.
-        if signature != webhook["secret"]:
+        # 2. Verify Signature using HMAC-SHA256
+        import json
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        secret_bytes = webhook["secret"].encode("utf-8")
+        expected_signature = hmac.new(
+            secret_bytes, payload_bytes, hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected_signature):
             return ApiResponse(code=1, message="Invalid signature").model_dump(
                 mode="json"
             )
 
-        # 3. Template Rendering (Simple Key Substitution)
+        # 3. Template Rendering (Jinja2)
+        from jinja2 import Environment, BaseLoader
+        env = Environment(loader=BaseLoader())
+        
         inputs = {}
-        template = webhook.get("inputs_template")
+        template_dict = webhook.get("inputs_template")
 
-        if not template:
+        if not template_dict:
             inputs = payload
         else:
-            for k, v in template.items():
-                # Handle basic {{ key }} substitution
-                if (
-                    isinstance(v, str)
-                    and v.startswith("{{")
-                    and v.endswith("}}")
-                ):
-                    source_key = v[2:-2].strip()
-                    inputs[k] = payload.get(source_key)
-                else:
-                    inputs[k] = v
+            try:
+                for k, v in template_dict.items():
+                    if isinstance(v, str):
+                        # Render string values as Jinja2 templates
+                        t = env.from_string(v)
+                        rendered = t.render(**payload)
+                        # Attempt to parse as JSON if it looks like a number or boolean
+                        if rendered.lower() == "true":
+                            inputs[k] = True
+                        elif rendered.lower() == "false":
+                            inputs[k] = False
+                        else:
+                            try:
+                                if "." in rendered:
+                                    inputs[k] = float(rendered)
+                                else:
+                                    inputs[k] = int(rendered)
+                            except ValueError:
+                                inputs[k] = rendered
+                    else:
+                        inputs[k] = v
+            except Exception as e:
+                return ApiResponse(
+                    code=1, message=f"Template rendering error: {str(e)}"
+                ).model_dump(mode="json")
 
         # 4. Execute
         intent = ChatIntent(

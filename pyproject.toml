@@ -10,10 +10,13 @@ authors = [{ name = "ChenEeHeng", email = "eeheng.chen@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "apscheduler>=3.11.2",
     "gradio>=6.2.0,<7",
+    "jinja2>=3.1.6",
     "jsonschema>=4.26.0",
     "openai>=2.14.0",
     "pip>=25.2",
+    "prometheus-client>=0.24.1",
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
     "sqlalchemy>=2.0.45",

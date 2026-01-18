@@ -32,6 +32,7 @@ from gradio_chat_agent.chat.adapter import AgentAdapter
 from gradio_chat_agent.models.enums import ExecutionMode, IntentType
 from gradio_chat_agent.models.intent import ChatIntent
 from gradio_chat_agent.models.plan import ExecutionPlan
+from gradio_chat_agent.observability.metrics import LLM_TOKEN_USAGE_TOTAL
 
 
 class OpenAIAgentAdapter(AgentAdapter):
@@ -249,6 +250,12 @@ SESSION MEMORY (FACTS):
 
             message_output = completion.choices[0].message
             tool_calls = message_output.tool_calls or []
+
+            # Metrics
+            if hasattr(completion, "usage") and completion.usage:
+                LLM_TOKEN_USAGE_TOTAL.labels(model=self.model_name).inc(
+                    completion.usage.total_tokens
+                )
 
             # Check for hallucinations
             invalid_tools = []

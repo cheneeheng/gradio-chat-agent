@@ -8,13 +8,21 @@ the Gradio web interface.
 import os
 import sys
 
+import gradio as gr
+import uvicorn
+from fastapi import FastAPI, Response
 
 # Ensure src is in path
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
+from gradio_chat_agent.execution.scheduler import SchedulerWorker
 from gradio_chat_agent.observability.logging import get_logger, setup_logging
+from gradio_chat_agent.observability.metrics import (
+    CONTENT_TYPE_LATEST,
+    get_metrics_content,
+)
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 from gradio_chat_agent.registry.demo_actions import (
     counter_component,
@@ -37,7 +45,6 @@ from gradio_chat_agent.registry.system_actions import (
 )
 from gradio_chat_agent.ui.layout import create_ui
 
-
 logger = get_logger(__name__)
 
 
@@ -54,6 +61,7 @@ def main():
     It then launches the server on port 7860.
     """
     setup_logging()
+
     # 1. Setup Registry
     registry = InMemoryRegistry()
 
@@ -78,6 +86,10 @@ def main():
     # 3. Setup Engine
     engine = ExecutionEngine(registry=registry, repository=repository)
 
+    # 3.5 Start Scheduler
+    scheduler = SchedulerWorker(engine)
+    scheduler.start()
+
     # 4. Setup Agent
     # Note: Requires OPENAI_API_KEY env var
     adapter = OpenAIAgentAdapter()
@@ -85,9 +97,24 @@ def main():
     # 5. Build UI
     demo = create_ui(engine, adapter)
 
-    # 6. Launch
-    logger.info("Starting Gradio Chat Agent...")
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # 6. Create FastAPI App and mount everything
+    app = FastAPI()
+
+    @app.get("/metrics")
+    def metrics():
+        return Response(
+            content=get_metrics_content(), media_type=CONTENT_TYPE_LATEST
+        )
+
+    app = gr.mount_gradio_app(app, demo, path="/")
+
+    # 7. Launch
+    logger.info("Starting Gradio Chat Agent with FastAPI...")
+
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=7860)
+    finally:
+        scheduler.stop()
 
 
 if __name__ == "__main__":

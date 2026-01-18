@@ -589,6 +589,27 @@ class SQLStateRepository(StateRepository):
         """
         self.add_project_member(project_id, user_id, role)
 
+    def list_enabled_schedules(self) -> list[dict[str, Any]]:
+        """Lists all enabled schedules across all projects.
+
+        Returns:
+            A list of schedule dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Schedule).where(Schedule.enabled == True)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "action_id": row.action_id,
+                    "cron": row.cron,
+                    "inputs": row.inputs,
+                    "enabled": row.enabled,
+                }
+                for row in rows
+            ]
+
     def get_project_members(self, project_id: str) -> list[dict[str, str]]:
         """Retrieves all members of a project.
 

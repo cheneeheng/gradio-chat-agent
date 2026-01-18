@@ -33,7 +33,6 @@ class TestOpenAIAgentAdapter:
 
     def test_message_to_intent_action_call(self, adapter):
         # Mock Response
-        mock_completion = MagicMock()
         mock_message = MagicMock()
         mock_tool_call = MagicMock()
         
@@ -43,7 +42,12 @@ class TestOpenAIAgentAdapter:
         mock_message.tool_calls = [mock_tool_call]
         mock_message.content = None
         
-        mock_completion.choices = [MagicMock(message=mock_message)]
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        
+        mock_completion = MagicMock()
+        mock_completion.choices = [mock_choice]
+        mock_completion.usage.total_tokens = 10
         adapter.client.chat.completions.create.return_value = mock_completion
         
         intent = adapter.message_to_intent_or_plan(
@@ -60,7 +64,6 @@ class TestOpenAIAgentAdapter:
 
     def test_message_to_intent_tool_call_clarification(self, adapter):
         # Mock Response for clarification tool call
-        mock_completion = MagicMock()
         mock_message = MagicMock()
         mock_tool_call = MagicMock()
         
@@ -68,8 +71,14 @@ class TestOpenAIAgentAdapter:
         mock_tool_call.function.arguments = '{"question": "Why?", "choices": ["A", "B"]}'
         
         mock_message.tool_calls = [mock_tool_call]
+        mock_message.content = None
         
-        mock_completion.choices = [MagicMock(message=mock_message)]
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        
+        mock_completion = MagicMock()
+        mock_completion.choices = [mock_choice]
+        mock_completion.usage.total_tokens = 5
         adapter.client.chat.completions.create.return_value = mock_completion
         
         intent = adapter.message_to_intent_or_plan(
@@ -86,12 +95,16 @@ class TestOpenAIAgentAdapter:
 
     def test_message_to_intent_clarification(self, adapter):
         # Mock Response (No tools, just text)
-        mock_completion = MagicMock()
         mock_message = MagicMock()
         mock_message.tool_calls = None
         mock_message.content = "What do you mean?"
         
-        mock_completion.choices = [MagicMock(message=mock_message)]
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        
+        mock_completion = MagicMock()
+        mock_completion.choices = [mock_choice]
+        mock_completion.usage.total_tokens = 5
         adapter.client.chat.completions.create.return_value = mock_completion
         
         intent = adapter.message_to_intent_or_plan(
@@ -121,8 +134,16 @@ class TestOpenAIAgentAdapter:
 
     def test_message_to_intent_with_media(self, adapter):
         # Mock successful response
+        mock_message = MagicMock()
+        mock_message.tool_calls = None
+        mock_message.content = "OK"
+        
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        
         mock_completion = MagicMock()
-        mock_completion.choices = [MagicMock(message=MagicMock(tool_calls=None, content="OK"))]
+        mock_completion.choices = [mock_choice]
+        mock_completion.usage.total_tokens = 5
         adapter.client.chat.completions.create.return_value = mock_completion
         
         adapter.message_to_intent_or_plan(
@@ -136,7 +157,6 @@ class TestOpenAIAgentAdapter:
 
     def test_message_to_intent_bad_json_args(self, adapter):
         # Mock Response with bad JSON in arguments
-        mock_completion = MagicMock()
         mock_message = MagicMock()
         mock_tool_call = MagicMock()
         
@@ -144,7 +164,14 @@ class TestOpenAIAgentAdapter:
         mock_tool_call.function.arguments = '{bad_json'
         
         mock_message.tool_calls = [mock_tool_call]
-        mock_completion.choices = [MagicMock(message=mock_message)]
+        mock_message.content = None
+        
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+        
+        mock_completion = MagicMock()
+        mock_completion.choices = [mock_choice]
+        mock_completion.usage.total_tokens = 5
         adapter.client.chat.completions.create.return_value = mock_completion
         
         intent = adapter.message_to_intent_or_plan(
@@ -170,7 +197,7 @@ class TestOpenAIAgentAdapter:
         mock_msg_invalid.tool_calls = [mock_tc_invalid]
         mock_msg_invalid.content = None
         mock_msg_invalid.role = "assistant"
-        mock_msg_invalid.model_dump.return_value = {"role": "assistant", "tool_calls": []}
+        mock_msg_invalid.model_dump.return_value = {"role": "assistant", "tool_calls": [], "content": None}
 
         mock_tc_valid = MagicMock()
         mock_tc_valid.function.name = "real.action"
@@ -183,8 +210,8 @@ class TestOpenAIAgentAdapter:
         mock_msg_valid.role = "assistant"
 
         adapter.client.chat.completions.create.side_effect = [
-            MagicMock(choices=[MagicMock(message=mock_msg_invalid)]),
-            MagicMock(choices=[MagicMock(message=mock_msg_valid)])
+            MagicMock(choices=[MagicMock(message=mock_msg_invalid)], usage=MagicMock(total_tokens=5)),
+            MagicMock(choices=[MagicMock(message=mock_msg_valid)], usage=MagicMock(total_tokens=5))
         ]
         
         res = adapter.message_to_intent_or_plan("do", [], {}, {}, {"real.action": {}})
@@ -196,7 +223,9 @@ class TestOpenAIAgentAdapter:
         mock_choice.message.tool_calls = None
         mock_choice.message.content = "Got it"
         mock_choice.message.role = "assistant"
-        adapter.client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+        mock_completion = MagicMock(choices=[mock_choice])
+        mock_completion.usage.total_tokens = 5
+        adapter.client.chat.completions.create.return_value = mock_completion
         
         adapter.message_to_intent_or_plan("look", [], {}, {}, {}, media={"data": "b64", "mime_type": "image/png"})
         
@@ -216,7 +245,9 @@ class TestOpenAIAgentAdapter:
         mock_tc.function.name = "ask_clarification"
         mock_tc.function.arguments = '{"question": "which?"}'
         mock_msg = MagicMock(tool_calls=[mock_tc], role="assistant", content=None)
-        adapter.client.chat.completions.create.return_value = MagicMock(choices=[MagicMock(message=mock_msg)])
+        mock_completion = MagicMock(choices=[MagicMock(message=mock_msg)])
+        mock_completion.usage.total_tokens = 5
+        adapter.client.chat.completions.create.return_value = mock_completion
         
         res = adapter.message_to_intent_or_plan("hi", [], {}, {}, {})
         assert res.question == "which?"
