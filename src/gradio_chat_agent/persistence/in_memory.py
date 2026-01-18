@@ -455,3 +455,7 @@ class InMemoryStateRepository(StateRepository):
             if v["project_id"] == project_id:
                 members.append({"user_id": v["user_id"], "role": v["role"]})
         return members
+
+    def check_health(self) -> bool:
+        """In-memory is always healthy."""
+        return True

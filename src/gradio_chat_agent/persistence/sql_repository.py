@@ -688,3 +688,12 @@ class SQLStateRepository(StateRepository):
                 }
                 for row in rows
             ]
+
+    def check_health(self) -> bool:
+        """Verifies database connection with a simple query."""
+        try:
+            with self.SessionLocal() as session:
+                session.execute(select(1))
+                return True
+        except Exception:
+            return False

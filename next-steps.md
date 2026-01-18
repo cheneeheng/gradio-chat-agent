@@ -57,9 +57,9 @@
 - [x] **Schedule Execution Identity:** Ensure scheduled tasks execute using a dedicated "System" user identity with appropriate permissions.
 - [x] **Webhook Signature Verification:** Implement secure HMAC-SHA256 verification (e.g., `X-Hub-Signature`) for incoming webhooks using the registered secret.
 - [x] **Jinja2 Webhook Templating:** Replace basic key substitution in `webhook_execute` with a full Jinja2 environment for mapping complex payloads to action inputs.
-- [ ] **Side Effect Dispatcher:**
-  - **Hook System:** Implement a `post_execution` hook in the `ExecutionEngine` to trigger external actions (e.g., API calls) only after state is successfully committed.
-  - **Replay Safety:** Implement a global `execution_context` or mode flag to ensure side effects are strictly suppressed during "Replay" or "Simulation" paths.
+- [x] **Side Effect Dispatcher:**
+  - [x] **Hook System:** Implement a `post_execution` hook in the `ExecutionEngine` to trigger external actions (e.g., API calls) only after state is successfully committed.
+  - [x] **Replay Safety:** Implement a global `execution_context` or mode flag to ensure side effects are strictly suppressed during "Replay" or "Simulation" paths.
   - **Async Observers:** Design a background observer pattern that polls the audit log for successful mutations to trigger long-running or unreliable external tasks asynchronously.
 - [ ] **Task Retries:** Add retry logic and error handling for failed scheduled tasks and webhook triggers.
 
@@ -129,7 +129,7 @@
 ## 12. Deployment & Infrastructure
 
 - [ ] **Production Dockerfile:** Create a root `Dockerfile` using `uv` and multi-stage builds, following the structure in the deployment guide.
-- [ ] **Health Check Endpoint:** Implement a dedicated FastAPI-based health endpoint (e.g., `/health`) to verify database and engine readiness.
+- [x] **Health Check Endpoint:** Implement a dedicated FastAPI-based health endpoint (e.g., `/health`) to verify database and engine readiness.
 - [ ] **Alembic Migrations:** Set up Alembic to manage database schema changes instead of relying on `metadata.create_all`.
 - [ ] **Gunicorn/Uvicorn Wrapper:** Update the entry point to support production-grade ASGI servers with multiple worker processes.
 
@@ -140,4 +140,4 @@
 - [ ] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
 - [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
 - [ ] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments.
-- [ ] **Environment-Aware Server Initialization:** Update `app.py` to respect `GRADIO_SERVER_NAME` and `GRADIO_SERVER_PORT` environment variables, enabling flexible deployment in containerized environments (Docker/K8s).
+- [x] **Environment-Aware Server Initialization:** Update `app.py` to respect `GRADIO_SERVER_NAME` and `GRADIO_SERVER_PORT` environment variables, enabling flexible deployment in containerized environments (Docker/K8s).

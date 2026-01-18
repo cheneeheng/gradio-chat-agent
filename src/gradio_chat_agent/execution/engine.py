@@ -11,7 +11,7 @@ import hashlib
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import jsonschema
 from pydantic import BaseModel
@@ -35,7 +35,6 @@ from gradio_chat_agent.observability.metrics import (
     ENGINE_EXECUTION_DURATION_SECONDS,
     ENGINE_EXECUTION_TOTAL,
 )
-from gradio_chat_agent.observability.logging import get_logger
 from gradio_chat_agent.persistence.repository import StateRepository
 from gradio_chat_agent.registry.abstract import Registry
 from gradio_chat_agent.utils import compute_state_diff
@@ -64,6 +63,7 @@ class ExecutionEngine:
     3. State loading and locking.
     4. Action execution (via handlers).
     5. Persistence of results and snapshots.
+    6. Post-execution hooks (side effects).
     """
 
     def __init__(
@@ -84,6 +84,47 @@ class ExecutionEngine:
         self.config = config or EngineConfig()
         self.project_locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
+        self.post_execution_hooks: list[Callable[[str, ExecutionResult], None]] = []
+
+    def add_post_execution_hook(
+        self, hook: Callable[[str, ExecutionResult], None]
+    ):
+        """Registers a callback to be executed after a successful state commit.
+
+        Hooks are skipped during simulation or if execution fails/is rejected.
+
+        Args:
+            hook: A callable that accepts (project_id, execution_result).
+        """
+        self.post_execution_hooks.append(hook)
+
+    def _dispatch_post_execution(
+        self, project_id: str, result: ExecutionResult
+    ):
+        """Triggers all registered post-execution hooks.
+
+        Args:
+            project_id: The project context.
+            result: The successful execution result.
+        """
+        if result.simulated or result.status != ExecutionStatus.SUCCESS:
+            return
+
+        for hook in self.post_execution_hooks:
+            try:
+                hook(project_id, result)
+            except Exception as e:
+                logger.error(
+                    f"Error in post_execution hook for {result.action_id}: {str(e)}",
+                    extra={
+                        "extra_fields": {
+                            "event": "hook_error",
+                            "project_id": project_id,
+                            "action_id": result.action_id,
+                            "request_id": result.request_id,
+                        }
+                    },
+                )
 
     def _get_project_lock(self, project_id: str) -> threading.Lock:
         """Retrieves (or creates) a threading lock for a specific project.
@@ -744,6 +785,9 @@ class ExecutionEngine:
             self.repository.save_snapshot(project_id, new_snapshot)
             self.repository.save_execution(project_id, result)
 
+            # 10. Dispatch Side Effects
+            self._dispatch_post_execution(project_id, result)
+
             return result
 
     def revert_to_snapshot(
@@ -809,6 +853,9 @@ class ExecutionEngine:
             # 3. Persistence
             self.repository.save_snapshot(project_id, new_snapshot)
             self.repository.save_execution(project_id, result)
+
+            # 4. Dispatch Side Effects
+            self._dispatch_post_execution(project_id, result)
 
             return result
 

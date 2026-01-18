@@ -106,13 +106,27 @@ def main():
             content=get_metrics_content(), media_type=CONTENT_TYPE_LATEST
         )
 
+    @app.get("/health")
+    def health():
+        db_healthy = repository.check_health()
+        status = "healthy" if db_healthy else "unhealthy"
+        code = 200 if db_healthy else 503
+        return Response(
+            content=f'{{"status": "{status}", "database": {"true" if db_healthy else "false"}}}',
+            status_code=code,
+            media_type="application/json",
+        )
+
     app = gr.mount_gradio_app(app, demo, path="/")
 
     # 7. Launch
-    logger.info("Starting Gradio Chat Agent with FastAPI...")
+    server_name = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0")
+    server_port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
+
+    logger.info(f"Starting Gradio Chat Agent with FastAPI on {server_name}:{server_port}...")
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=7860)
+        uvicorn.run(app, host=server_name, port=server_port)
     finally:
         scheduler.stop()
 

@@ -359,3 +359,12 @@ class StateRepository(ABC):
             A list of dictionaries containing user_id and role.
         """
         pass  # pragma: no cover
+
+    @abstractmethod
+    def check_health(self) -> bool:
+        """Checks the health of the repository (e.g. database connection).
+
+        Returns:
+            True if healthy, False otherwise.
+        """
+        pass  # pragma: no cover
