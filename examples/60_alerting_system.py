@@ -71,21 +71,25 @@ def run_example():
     # 5. Simulate High Failure Rate
     print("\n--- Scenario 3: High Failure Rate ---")
     # Add 9 failures and 1 success in the last 5 minutes
+    from datetime import datetime, timezone
     for i in range(9):
-        fail_res = MagicMock(
+        fail_res = ExecutionResult(
             request_id=f"f{i}",
             action_id="act",
             status=ExecutionStatus.FAILED,
-            timestamp=time.time(),
+            timestamp=datetime.now(timezone.utc),
+            state_snapshot_id="err",
             metadata={}
         )
         repo.save_execution(project_id, fail_res)
     
     # 10th execution (must exceed 10 for check)
-    last_res = MagicMock(
+    last_res = ExecutionResult(
         request_id="r10",
         action_id="act",
         status=ExecutionStatus.SUCCESS,
+        timestamp=datetime.now(timezone.utc),
+        state_snapshot_id="ok",
         execution_time_ms=100,
         simulated=False
     )

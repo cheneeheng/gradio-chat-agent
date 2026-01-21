@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 from gradio_chat_agent.cli import app, get_repo
 from gradio_chat_agent.persistence.sql_repository import SQLStateRepository
 import os
+import re
 
 runner = CliRunner()
 
@@ -122,3 +123,39 @@ class TestCLI:
         with patch.object(Typer, "__call__") as mock_call:
             runpy.run_path("src/gradio_chat_agent/cli.py", run_name="__main__")
             mock_call.assert_called_once()
+
+    def test_cli_token_commands_coverage(self):
+        # 1. token create with expiry
+        result = runner.invoke(app, ["token", "create", "--owner", "alice", "--name", "T1", "--expires-days", "7"])
+        assert result.exit_code == 0
+        assert "Token created: T1" in result.output
+        assert "Expires at:" in result.output
+        
+        # 2. token list
+        result = runner.invoke(app, ["token", "list", "--owner", "alice"])
+        assert result.exit_code == 0
+        assert "Active" in result.output
+        
+        # 3. token list empty
+        result = runner.invoke(app, ["token", "list", "--owner", "nobody"])
+        assert result.exit_code == 0
+        assert "No tokens found" in result.output
+
+        # Extract token ID if possible, or just list it.
+        result = runner.invoke(app, ["token", "list", "--owner", "alice"])
+        match = re.search(r"^\[Active\] (sk-[a-f0-9]+): T1", result.output)
+        if match:
+            token_id = match.group(1)
+            # 4. token revoke
+            result = runner.invoke(app, ["token", "revoke", token_id])
+            assert result.exit_code == 0
+            assert f"Token revoked: {token_id}" in result.output
+
+    def test_cli_worker_start_coverage(self):
+        with patch("gradio_chat_agent.execution.tasks.huey.create_consumer") as mock_create:
+            mock_consumer = mock_create.return_value
+            result = runner.invoke(app, ["worker", "start", "--workers", "2"])
+            assert result.exit_code == 0
+            assert "Starting Huey worker" in result.output
+            mock_create.assert_called_with(workers=2)
+            mock_consumer.run.assert_called_once()

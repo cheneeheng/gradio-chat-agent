@@ -1,5 +1,7 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import gradio_chat_agent.app as app
+from fastapi.testclient import TestClient
+from starlette.responses import RedirectResponse
 
 
 class TestApp:
@@ -41,8 +43,6 @@ class TestApp:
                     assert mock_run.called
 
     def test_endpoints_via_main(self):
-        from fastapi.testclient import TestClient
-        
         # We want to capture the 'app' passed to uvicorn.run
         # And we want gr.mount_gradio_app to behave transparently (return the app passed to it)
         with patch("uvicorn.run") as mock_run:
@@ -78,3 +78,42 @@ class TestApp:
                             res = client.get("/health")
                             assert res.status_code == 503
                             assert res.json()["status"] == "unhealthy"
+
+    def test_app_auth_endpoints_coverage(self):
+        with patch("gradio_chat_agent.app.SQLStateRepository"), \
+             patch("gradio_chat_agent.app.OpenAIAgentAdapter"), \
+             patch("gradio_chat_agent.app.create_ui"), \
+             patch("gradio.mount_gradio_app", side_effect=lambda app, *args, **kwargs: app):
+            
+            with patch("gradio_chat_agent.auth.manager.AuthManager") as mock_auth_cls:
+                mock_auth = mock_auth_cls.return_value
+                mock_auth.login = AsyncMock(return_value=RedirectResponse(url="http://redirect"))
+                mock_auth.auth_callback = AsyncMock(return_value={"sub": "u1"})
+                mock_auth.get_current_user.return_value = {"sub": "u1"}
+                
+                app_instance = app.create_app()
+                client = TestClient(app_instance, follow_redirects=False)
+                
+                # 1. /login
+                res = client.get("/login")
+                assert res.status_code in [302, 307]
+                
+                # 2. /auth success
+                res = client.get("/auth")
+                assert res.status_code in [302, 307]
+                
+                # 3. /auth failure
+                mock_auth.auth_callback = AsyncMock(return_value=None)
+                res = client.get("/auth")
+                assert res.status_code == 200
+                assert "error" in res.json()
+                
+                # 4. /logout
+                res = client.get("/logout")
+                assert res.status_code in [302, 307]
+                mock_auth.logout.assert_called()
+                
+                # 5. /me
+                mock_auth.get_current_user.return_value = {"sub": "u1"}
+                res = client.get("/me")
+                assert res.json()["user"]["sub"] == "u1"

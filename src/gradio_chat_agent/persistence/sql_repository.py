@@ -1,6 +1,6 @@
 """SQLAlchemy implementation of the StateRepository."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import create_engine, delete, func, select
@@ -720,7 +720,7 @@ class SQLStateRepository(StateRepository):
         with self.SessionLocal() as session:
             project = session.get(Project, project_id)
             if project:
-                project.archived_at = datetime.utcnow()
+                project.archived_at = datetime.now(UTC)
                 session.commit()
 
     def purge_project(self, project_id: str):
@@ -888,7 +888,7 @@ class SQLStateRepository(StateRepository):
         from gradio_chat_agent.persistence.models import Lock
 
         with self.SessionLocal() as session:
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             expires_at = now + timedelta(seconds=timeout_seconds)
 
             # Check if lock exists
@@ -897,7 +897,8 @@ class SQLStateRepository(StateRepository):
             if lock:
                 # Check if expired or held by same holder
                 if (
-                    lock.expires_at is not None and lock.expires_at < now
+                    lock.expires_at is not None
+                    and lock.expires_at.replace(tzinfo=timezone.utc) < now
                 ) or lock.holder_id == holder_id:
                     lock.holder_id = holder_id
                     lock.acquired_at = now
@@ -1055,7 +1056,7 @@ class SQLStateRepository(StateRepository):
         with self.SessionLocal() as session:
             db_token = session.get(ApiToken, token_id)
             if db_token:
-                db_token.revoked_at = datetime.utcnow()
+                db_token.revoked_at = datetime.now(UTC)
                 session.commit()
 
     def validate_api_token(self, token_id: str) -> Optional[str]:
@@ -1076,7 +1077,9 @@ class SQLStateRepository(StateRepository):
                 return None
 
             if db_token.expires_at:
-                if db_token.expires_at < datetime.utcnow():
+                if db_token.expires_at.replace(
+                    tzinfo=timezone.utc
+                ) < datetime.now(UTC):
                     return None
 
             return db_token.user_id

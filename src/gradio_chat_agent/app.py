@@ -162,13 +162,29 @@ def create_app() -> FastAPI:
     adapter = OpenAIAgentAdapter()
 
     # 5. Create FastAPI App
-    app = FastAPI()
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # --- Startup ---
+        app.state.scheduler.start()
+        app.state.browser_observer.start()
+
+        yield
+
+        # --- Shutdown ---
+        app.state.scheduler.stop()
+        app.state.browser_observer.stop()
+        app.state.browser_executor.stop()
+
+    app = FastAPI(lifespan=lifespan)
 
     # 6. Setup Auth
-    from gradio_chat_agent.auth.manager import AuthManager
     from starlette.requests import Request
     from starlette.responses import RedirectResponse
-    
+
+    from gradio_chat_agent.auth.manager import AuthManager
+
     auth_manager = AuthManager(app)
 
     @app.get("/login")
@@ -240,19 +256,7 @@ def create_app() -> FastAPI:
     app.state.browser_observer = browser_observer
     app.state.browser_executor = browser_executor
 
-    @app.on_event("startup")
-    def startup_event():
-        app.state.scheduler.start()
-        app.state.browser_observer.start()
-
-    @app.on_event("shutdown")
-    def shutdown_event():
-        app.state.scheduler.stop()
-        app.state.browser_observer.stop()
-        app.state.browser_executor.stop()
-
     return gr.mount_gradio_app(app, demo, path="/")
-
 
 
 def main():

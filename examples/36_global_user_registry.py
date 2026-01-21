@@ -22,17 +22,17 @@ def run_example():
     
     # 2. List Users
     print("\n--- Listing Users ---")
-    res = api.list_users()
+    res = api.list_users(user_id="admin")
     for u in res["data"]:
         print(f"ID: {u['id']}, Name: {u['full_name']}")
         
     # 3. Delete a user
     print("\nDeleting user1...")
-    api.delete_user("user1")
+    api.delete_user("user1", user_id="admin")
     
     # 4. Verify
     print("\n--- Listing Users after deletion ---")
-    res = api.list_users()
+    res = api.list_users(user_id="admin")
     for u in res["data"]:
         print(f"ID: {u['id']}, Name: {u['full_name']}")
 

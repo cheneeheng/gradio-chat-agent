@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta
 from gradio_chat_agent.persistence.in_memory import InMemoryStateRepository
 from gradio_chat_agent.models.state_snapshot import StateSnapshot
 
@@ -203,3 +204,13 @@ class TestInMemoryRepository:
         
         all_wh = repo.list_webhooks() # project_id=None
         assert len(all_wh) == 2
+
+    def test_in_memory_lock_expired(self):
+        repo = InMemoryStateRepository()
+        pid = "p1"
+        # Acquire a lock that expires immediately
+        repo.acquire_lock(pid, "h1", timeout_seconds=-1)
+        
+        # Another holder should be able to take it
+        assert repo.acquire_lock(pid, "h2", timeout_seconds=10) is True
+        assert repo._locks[pid]["holder_id"] == "h2"

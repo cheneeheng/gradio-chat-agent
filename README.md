@@ -25,22 +25,6 @@ The chat interface is **not authoritative**. It is a convenience layer on top of
 
 ---
 
-## What This Is (and Is Not)
-
-### This is:
-
-- A control plane for component‑based applications
-- A safe way to let chat interfaces manipulate real state
-- A foundation for automation with human oversight
-
-### This is not:
-
-- A chatbot that directly mutates state
-- A prompt‑driven workflow engine
-- A UI‑only demo
-
----
-
 ## Architecture
 
 ```
@@ -57,182 +41,39 @@ Persistent State + Audit Log
 
 ---
 
-### Key Insight
+## Key Components
 
-The **execution engine** is the single source of truth.
-
-Everything else — chat UI, API calls, webhooks, schedulers — is just a client.
-
----
-
-## Components
-
-### 1. Chat UI
-
-- Built with Gradio
-- Displays state, diffs, plans, and warnings
-- Allows plan approval / rejection
-- Never executes actions directly
-
-### 2. Agent Layer
-
-- Uses an LLM to interpret user intent
-- Proposes actions or multi‑step plans
-- Reads state and memory
-- Cannot bypass engine rules
-
-### 3. Execution Engine
-
-Enforces:
-
-- User × project roles (`viewer`, `operator`, `admin`)
-- Project archival state
-- Rate limits (RPM/RPH)
-- Policy-defined budget thresholds
-- Risk‑weighted execution validation
-- Human approval workflows
-- Replayability and audit logging
-
-### 4. Persistence
-
-- Snapshots of component state
-- Execution logs with diffs
-- Explicit session memory
-- Project configuration and limits
-
-### 5. Observability
-
-- JSONL audit logs
-- Execution history with state diffs
-- Budget tracking (Work in Progress)
-
----
-
-## Projects and Roles
-
-- All state is scoped to **(user, project)**
-- Users may have different roles per project
-- Roles:
-  - `viewer`: read‑only
-  - `operator`: execute low/medium‑risk actions
-  - `admin`: full control, role management, ownership transfer
-
----
-
-## Governance Features (Implemented & Planned)
-
-- **Rate limits** (Implemented)
-  - Per minute / hour
-- **Approvals** (Implemented)
-  - Risk-based confirmation gates
-  - Role‑aware
-- **Policy‑as‑code** (Implemented)
-  - YAML‑defined governance rules
-- **Budgets** (In Progress)
-  - Project‑level daily budgets
-  - Risk‑weighted costs
-- **Execution windows** (Planned)
-  - Time‑boxed permissions
-- **Forecasting & Alerts** (Planned)
-  - Predict budget exhaustion
-  - Webhook notifications on thresholds
-
----
-
-## Replay and Audit
-
-Every execution:
-
-- Is logged with inputs, outputs, diffs, and metadata
-- Can be replayed deterministically
-- Can be exported as JSON
-- Is safe to inspect without side effects
-
----
-
-## API Access
-
-Gradio exposes all execution and audit endpoints as authenticated HTTP APIs.
-
-This allows:
-
-- Headless automation
-- External tooling
-- Webhooks and schedulers (Management API)
-
-All API calls go through the same execution engine.
-
----
-
-## Why This Exists
-
-Most “chat‑controls‑UI” demos fail because:
-
-- The chat is the authority
-- State changes are implicit
-- There is no replay or audit
-- Safety is handled in prompts
-
-This project exists to show how to do it **correctly**.
-
----
-
-## Status
-
-This system's **core architecture is complete**.
-
-The focus is now on hardening the governance layer and expanding integration:
-
-- **Identity federation (OIDC)**
-- **Background Worker** for Schedulers
-- **Encrypted Secrets Management**
-- **Execution Windows** and daily budget enforcement
-- **UI polish**
+1.  **Chat UI**: A "Thin Client" built with Gradio that renders state and submits intents.
+2.  **Agent Layer**: An LLM-based interpreter that converts natural language to structured `ChatIntent`.
+3.  **Execution Engine**: The authoritative heart that validates permissions, limits, and applies mutations.
+4.  **Persistence**: SQL-backed storage for snapshots, audit logs, and session memory.
+5.  **Observability**: Integrated Prometheus metrics, JSONL logging, and automated alerting.
 
 ---
 
 ## Documentation
 
-### Fundamentals
-- [Core Concepts](docs/01_CORE_CONCEPTS.md)
-- [Getting Started](docs/02_GETTING_STARTED.md)
-- [Project Roadmap](docs/03_ROADMAP.md)
+For a comprehensive guide to the system, please refer to the **[Guide Book](docs/GUIDEBOOK.md)**.
 
-### System Architecture
-- [Architecture Overview](docs/04_ARCHITECTURE.md)
-- [Execution Engine](docs/05_EXECUTION_ENGINE.md)
-- [Agent Layer](docs/06_AGENT_LAYER.md)
-- [Persistence Layer](docs/07_PERSISTENCE_LAYER.md)
-- [UI Architecture](docs/08_UI_ARCHITECTURE.md)
+### Quick Links
+- **Fundamentals**: [Core Concepts](docs/01_core_concepts.md) | [Getting Started](docs/02_getting_started.md)
+- **Architecture**: [System Overview](docs/03_architecture_overview.md) | [Execution Engine](docs/04_execution_engine.md)
+- **Development**: [Development Guide](docs/20_development_guide.md) | [API Reference](docs/23_api_reference.md)
+- **Operations**: [Deployment Guide](docs/21_deployment_guide.md) | [Observability](docs/19_observability.md)
+- **Strategy**: [Product Roadmap](docs/25_product_roadmap.md)
 
-### Contracts & Registries
-- [Chat Agent Contract](docs/09_CHAT_AGENT_CONTRACT.md)
-- [Chat Control Protocol](docs/10_CHAT_CONTROL_PROTOCOL.md)
-- [UI Component Registry](docs/11_UI_COMPONENT_REGISTRY.md)
-- [UI Action Registry](docs/12_UI_ACTION_REGISTRY.md)
+---
 
-### Advanced Features
-- [Automation System](docs/13_AUTOMATION_SYSTEM.md)
-- [Session Memory (Facts)](docs/14_SESSION_MEMORY.md)
-- [Multimodal Intent (Images)](docs/15_MULTIMODAL_INTENT.md)
-- [Real-World Integration (Side Effects)](docs/16_SIDE_EFFECTS_GUIDE.md)
+## Why This Exists
 
-### Governance & Security
-- [User & Role Management](docs/17_USER_MANAGEMENT.md)
-- [Platform Governance](docs/18_PLATFORM_GOVERNANCE.md)
-- [Threat Model](docs/19_THREAT_MODEL.md)
-- [Observability Guide](docs/20_OBSERVABILITY.md)
+Most “chat‑controls‑UI” demos fail because the chat is the authority, state changes are implicit, and safety is handled purely in prompts. This project demonstrates how to build a production-grade system where chat acts as a **governor**, not the driver.
 
-### Development & Operations
-- [Development Guide](docs/21_DEVELOPMENT_GUIDE.md)
-- [API Reference](docs/22_API_REFERENCE.md)
-- [Configuration Reference](docs/23_CONFIGURATION.md)
-- [Deployment Guide](docs/24_DEPLOYMENT_GUIDE.md)
-- [Troubleshooting Guide](docs/25_TROUBLESHOOTING.md)
+---
 
-### Appendix
-- [Architecture Brainstorming](docs/99_ARCHITECTURE_BRAINSTORMING.md)
+## Status
+
+The core architecture is complete and production-hardened. Current focus is on expanding the ecosystem of components and enhancing multi-tenant governance.
 
 ## License
 
-MIT (or your choice)
+MIT

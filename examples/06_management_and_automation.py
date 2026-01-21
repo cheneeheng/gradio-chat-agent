@@ -43,10 +43,10 @@ def run_example():
     print("\n--- Project Lifecycle ---")
     project_id = f"proj-{uuid.uuid4().hex[:8]}"
 
-    # Create Project
+    # Create Project (System Admin required)
     print(f"Creating project: {project_id}")
     res = api.manage_project(
-        ProjectOp.CREATE, name="Automation Demo", project_id=project_id
+        ProjectOp.CREATE, name="Automation Demo", project_id=project_id, user_id="admin"
     )
     print(f"Result: {res}")
 
@@ -94,10 +94,21 @@ def run_example():
     res = api.manage_webhook(WebhookOp.CREATE, config=webhook_config)
     print(f"Result: {res}")
 
-    # Simulate Webhook Trigger
+    # Simulate Webhook Trigger with correct HMAC signature
     print("Simulating external webhook trigger...")
     payload = {"payload_value": 100}
-    res = api.webhook_execute(webhook_id, payload, signature=webhook_secret)
+    
+    import hmac
+    import hashlib
+    import json
+    payload_json = json.dumps(payload, sort_keys=True)
+    signature = hmac.new(
+        webhook_secret.encode("utf-8"),
+        payload_json.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    res = api.webhook_execute(webhook_id, payload, signature=signature)
     print(
         f"Webhook Execution Result: {res.get('status')} - {res.get('message')}"
     )
@@ -141,8 +152,8 @@ def run_example():
 
     # 7. Cleanup
     print("\n--- Cleanup ---")
-    print("Purging project...")
-    res = api.manage_project(ProjectOp.PURGE, project_id=project_id)
+    print("Purging project (Requires confirmation)...")
+    res = api.manage_project(ProjectOp.PURGE, project_id=project_id, user_id="admin", confirmed=True)
     print(f"Result: {res}")
 
     # Verify purge

@@ -546,7 +546,7 @@ class TestApiEndpoints:
         else:
             assert args[1].inputs == {"foo": "bar"}
         
-        # Test static/dynamic mix - hitting the "else" branch for plain strings
+        # Test static/dynamic x - hitting the "else" branch for plain strings
         payload_static = {"val": 123}
         payload_bytes = json.dumps(payload_static, sort_keys=True).encode("utf-8")
         sig_static = hmac.new(b"s", payload_bytes, hashlib.sha256).hexdigest()
@@ -639,9 +639,8 @@ class TestApiEndpoints:
         webhook_id = "wh-err"
         repo._webhooks[webhook_id] = {
             "id": webhook_id, "project_id": pid, "action_id": "act", "secret": "s", "enabled": True,
-            "inputs_template": {"val": "{{ 1/0 }}"} # ZeroDivisionError in jinja? No, Jinja handles it differently usually, but let's try syntax error
+            "inputs_template": {"val": "{{ x }"} # Syntax Error
         }
-        repo._webhooks[webhook_id]["inputs_template"] = {"val": "{{ x }"} # Syntax Error
         
         payload = {}
         payload_bytes = b"{}"
@@ -690,10 +689,6 @@ class TestApiEndpoints:
         assert "Project ID required" in res["message"]
         
         # Unknown op
-        # We need to bypass the Enum type check if using python enum, but the method type hint says ProjectOp.
-        # However, passing a string that isn't in Enum might fail Pydantic validation if strictly typed, 
-        # but here it's a method argument. 
-        # If I pass a string "unknown", it won't equal any ProjectOp member.
         res = api.manage_project("unknown", user_id="admin")
         assert res["code"] == 1
         assert "Unknown operation" in res["message"]
@@ -703,3 +698,11 @@ class TestApiEndpoints:
         # Just check it calls the service and returns data
         res = api.budget_forecast(pid)
         assert "status" in res["data"]
+
+    def test_create_api_token_with_expiry(self, setup):
+        api, engine, repo, pid = setup
+        res = api.create_api_token("u1", "T", user_id="admin", expires_in_days=7)
+        assert res["code"] == 0
+        assert res["data"]["expires_at"] is not None
+        token_id = res["data"]["token"]
+        assert repo._api_tokens[token_id]["expires_at"] is not None

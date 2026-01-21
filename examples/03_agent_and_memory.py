@@ -61,6 +61,7 @@ def run_example():
         component_registry=comp_reg,
         action_registry=act_reg,
         execution_mode=ExecutionMode.ASSISTED,
+        facts={},
     )
 
     if intent.type == "action_call" and intent.action_id == "memory.remember":
@@ -68,9 +69,9 @@ def run_example():
             f"Agent proposes: {intent.action_id}(key='{intent.inputs['key']}', value='{intent.inputs['value']}')"
         )
 
-        # Execute the memory action
+        # Execute the memory action (user_id is required for memory actions)
         result = engine.execute_intent(
-            project_id, intent, user_roles=["admin"]
+            project_id, intent, user_roles=["admin"], user_id="admin"
         )
         print(f"Engine: {result.message}")
     else:
@@ -83,9 +84,8 @@ def run_example():
     user_msg_2 = "What is my favorite color?"
     print(f"User: {user_msg_2}")
 
-    # Fetch updated state (now contains the memory)
-    snapshot_2 = repository.get_latest_snapshot(project_id)
-    state_dict_2 = snapshot_2.components
+    # Fetch updated facts from repository
+    facts = repository.get_session_facts(project_id, "admin")
 
     # Update history for context
     history = [
@@ -99,10 +99,11 @@ def run_example():
     intent_2 = adapter.message_to_intent_or_plan(
         message=user_msg_2,
         history=history,
-        state_snapshot=state_dict_2,
+        state_snapshot={},
         component_registry=comp_reg,
         action_registry=act_reg,
         execution_mode=ExecutionMode.ASSISTED,
+        facts=facts,
     )
 
     # In this case, the agent should ideally respond with a clarification/answer

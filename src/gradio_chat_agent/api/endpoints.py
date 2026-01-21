@@ -6,7 +6,7 @@ This module defines the logic for the headless API endpoints exposed via Gradio.
 import hashlib
 import hmac
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from gradio_chat_agent.execution.engine import ExecutionEngine
@@ -333,18 +333,21 @@ class ApiEndpoints:
 
         # 4. Execute
         if use_huey:
-            from gradio_chat_agent.execution.tasks import execute_background_action
+            from gradio_chat_agent.execution.tasks import (
+                execute_background_action,
+            )
+
             execute_background_action(
-                webhook["project_id"], 
-                webhook["action_id"], 
-                inputs, 
-                "webhook", 
-                "webhook"
+                webhook["project_id"],
+                webhook["action_id"],
+                inputs,
+                "webhook",
+                "webhook",
             )
             return ApiResponse(
                 code=0,
                 message="Action offloaded to background worker.",
-                data={"status": "pending_background"}
+                data={"status": "pending_background"},
             ).model_dump(mode="json")
 
         intent = ChatIntent(
@@ -811,7 +814,7 @@ class ApiEndpoints:
         if expires_in_days:
             from datetime import timedelta
 
-            expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+            expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
 
         self.engine.repository.create_api_token(
             owner_user_id, name, token_id, expires_at

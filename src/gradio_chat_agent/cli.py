@@ -170,12 +170,12 @@ def token_create(
     """Creates a new API token."""
     repo = get_repo()
     import uuid
-    from datetime import datetime, timedelta
+    from datetime import UTC, datetime, timedelta
 
     token_id = f"sk-{uuid.uuid4().hex}"
     expires_at = None
     if expires_days:
-        expires_at = datetime.utcnow() + timedelta(days=expires_days)
+        expires_at = datetime.now(UTC) + timedelta(days=expires_days)
 
     repo.create_api_token(owner, name, token_id, expires_at)
     typer.echo(f"Token created: {name}")
@@ -216,8 +216,9 @@ def worker_start(
 ):
     """Starts the Huey background worker."""
     from gradio_chat_agent.execution.tasks import huey
+
     typer.echo(f"Starting Huey worker with {workers} threads...")
-    from huey.consumer import Consumer
+
     consumer = huey.create_consumer(workers=workers)
     consumer.run()
 

@@ -16,7 +16,7 @@ Ensure you have `uv` installed. Then sync the environment:
 uv sync
 ```
 
-For detailed development instructions (testing, linting, contributing), please see the [Development Guide](21_DEVELOPMENT_GUIDE.md).
+For detailed development instructions (testing, linting, contributing), please see the [Development Guide](20_development_guide.md).
 
 ### Running the App
 

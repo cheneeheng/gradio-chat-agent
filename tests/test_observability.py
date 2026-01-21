@@ -1,6 +1,7 @@
 import json
 import logging
 import io
+import sys
 import pytest
 from gradio_chat_agent.observability.logging import JsonFormatter, setup_logging, get_logger
 
@@ -31,6 +32,20 @@ def test_json_formatter():
     assert data["request_id"] == "req-123"
     assert data["project_id"] == "proj-1"
     assert "timestamp" in data
+
+def test_json_formatter_exception():
+    formatter = JsonFormatter()
+    try:
+        raise ValueError("test exception")
+    except ValueError:
+        record = logging.LogRecord(
+            name="test", level=logging.ERROR, pathname="f.py", lineno=1,
+            msg="msg", args=(), exc_info=sys.exc_info()
+        )
+        formatted = formatter.format(record)
+        data = json.loads(formatted)
+        assert "exception" in data
+        assert "ValueError: test exception" in data["exception"]
 
 def test_setup_logging():
     # Use a string buffer to capture output

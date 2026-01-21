@@ -312,9 +312,6 @@ class TestUIController:
         
         adapter.message_to_intent_or_plan.return_value = None
         controller.on_submit("hi", [], pid, uid, "assisted")
-        
-        # We can't easily verify the internal user_role variable without mocking execute_intent 
-        # or similar, but this executes the lookup code.
 
     def test_on_approve_plan_role_lookup(self, setup):
         controller, engine, _, pid, uid = setup
@@ -325,7 +322,6 @@ class TestUIController:
         engine.execute_plan.return_value = []
         
         controller.on_approve_plan(plan, [], pid, uid)
-        # Verifies role lookup in on_approve_plan
 
     def test_ui_controller_on_submit_pending_approval(self, setup):
         controller, engine, adapter, pid, uid = setup
@@ -367,6 +363,27 @@ class TestUIController:
         members, _ = controller.on_remove_member(pid, uid, "new")
         assert members == [[uid, "admin"]]
 
+    def test_ui_controller_auth_coverage(self, setup):
+        controller, engine, adapter, pid, uid = setup
+        controller.auth_manager = MagicMock()
+        
+        mock_request = MagicMock(spec=gr.Request)
+        controller.auth_manager.get_current_user.return_value = {"sub": "oidc_user"}
+        engine.resolve_user_roles.return_value = ["admin"]
+        
+        # 1. refresh_ui with OIDC user
+        res = controller.refresh_ui("p1", "default_uid", request=mock_request)
+        assert "Authenticated via OIDC" in res[10]
+        assert "oidc_user" in res[10]
+
+        # 2. on_submit with OIDC user
+        controller.on_submit("msg", [], "p1", "default_uid", "assisted", request=mock_request)
+        engine.resolve_user_roles.assert_called_with("p1", "oidc_user")
+
+        # 3. on_approve_plan with OIDC user
+        controller.on_approve_plan(MagicMock(), [], "p1", "default_uid", request=mock_request)
+        engine.resolve_user_roles.assert_called_with("p1", "oidc_user")
+
 
 class TestUILayout:
     def test_create_ui(self):
@@ -375,3 +392,36 @@ class TestUILayout:
         # Simply test that it returns a Blocks object and doesn't crash
         ui = create_ui(engine, adapter)
         assert isinstance(ui, gr.Blocks)
+
+    def test_check_oidc_coverage(self):
+        engine = MagicMock()
+        adapter = MagicMock()
+        auth_manager = MagicMock()
+        
+        # 1. Enabled
+        auth_manager.enabled = True
+        with patch("gradio.Blocks.load") as mock_load:
+            ui = create_ui(engine, adapter, auth_manager=auth_manager)
+            found = False
+            for call in mock_load.call_args_list:
+                fn = call.args[0]
+                if callable(fn) and "check_oidc" in getattr(fn, "__name__", ""):
+                    found = True
+                    with patch("gradio.update", side_effect=lambda **k: k):
+                        res = fn()
+                        assert res["visible"] is True
+            assert found
+
+        # 2. Disabled
+        auth_manager.enabled = False
+        with patch("gradio.Blocks.load") as mock_load:
+            ui = create_ui(engine, adapter, auth_manager=auth_manager)
+            found = False
+            for call in mock_load.call_args_list:
+                fn = call.args[0]
+                if callable(fn) and "check_oidc" in getattr(fn, "__name__", ""):
+                    found = True
+                    with patch("gradio.update", side_effect=lambda **k: k):
+                        res = fn()
+                        assert res["visible"] is False
+            assert found

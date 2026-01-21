@@ -264,3 +264,46 @@ class TestSQLRepository:
             mock_session.__enter__.return_value.execute.side_effect = Exception("DB Down")
             
             assert repo.check_health() is False
+
+    def test_sql_repo_additional_coverage(self, repo):
+        pid = "p1"
+        
+        # 1. save_snapshot delta branch (lines 176-184)
+        # Need checkpoint first
+        snap1 = StateSnapshot(snapshot_id="s1", components={"c": {"v": 1}})
+        repo.save_snapshot(pid, snap1, is_checkpoint=True)
+        # Save delta
+        snap2 = StateSnapshot(snapshot_id="s2", components={"c": {"v": 2}})
+        repo.save_snapshot(pid, snap2, is_checkpoint=False, parent_id="s1")
+        
+        # 2. count_recent_executions with status filter (line 509)
+        res1 = ExecutionResult(request_id="r1", action_id="a", status=ExecutionStatus.SUCCESS, state_snapshot_id="s1")
+        repo.save_execution(pid, res1)
+        res2 = ExecutionResult(request_id="r2", action_id="a", status=ExecutionStatus.FAILED, state_snapshot_id="s1")
+        repo.save_execution(pid, res2)
+        
+        assert repo.count_recent_executions(pid, 10, status=ExecutionStatus.SUCCESS) == 1
+        assert repo.count_recent_executions(pid, 10, status=ExecutionStatus.FAILED) == 1
+
+        # 3. list_enabled_schedules (lines 789-792)
+        repo.save_schedule({"id": "sch1", "project_id": pid, "action_id": "a", "cron": "*", "enabled": True})
+        repo.save_schedule({"id": "sch2", "project_id": pid, "action_id": "a", "cron": "*", "enabled": False})
+        enabled = repo.list_enabled_schedules()
+        assert len(enabled) == 1
+        assert enabled[0]["id"] == "sch1"
+
+        # 4. list_api_tokens (lines 1034-1037)
+        repo.create_user("u1", "h")
+        repo.create_api_token("u1", "t1", "id1")
+        tokens = repo.list_api_tokens("u1")
+        assert len(tokens) == 1
+        assert tokens[0]["name"] == "t1"
+
+        # 5. revoke_api_token (lines 1055-1059)
+        repo.revoke_api_token("id1")
+        tokens2 = repo.list_api_tokens("u1")
+        assert tokens2[0]["revoked_at"] is not None
+
+        # 6. validate_api_token missing/revoked (lines 1073, 1076)
+        assert repo.validate_api_token("missing") is None
+        assert repo.validate_api_token("id1") is None # Revoked

@@ -1,5 +1,6 @@
 import pytest
 import os
+from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import FastAPI
 from starlette.requests import Request
 from gradio_chat_agent.auth.manager import AuthManager
@@ -79,3 +80,44 @@ class TestAuthManager:
         with pytest.raises(HTTPException) as exc:
             await auth.auth_callback(None)
         assert exc.value.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_auth_manager_oidc_coverage(self, app):
+        with patch.dict("os.environ", {
+            "OIDC_ISSUER": "https://issuer",
+            "OIDC_CLIENT_ID": "id",
+            "OIDC_CLIENT_SECRET": "secret"
+        }):
+            auth = AuthManager(app)
+            assert auth.enabled is True
+            
+            # 1. Test login redirect
+            mock_req = MagicMock(spec=Request)
+            auth.oauth.oidc.authorize_redirect = AsyncMock(return_value="redirect")
+            res = await auth.login(mock_req, "https://callback")
+            assert res == "redirect"
+            
+            # 2. Test auth_callback
+            # Success
+            auth.oauth.oidc.authorize_access_token = AsyncMock(return_value={
+                "userinfo": {"sub": "u1", "name": "User 1"}
+            })
+            mock_req.session = {}
+            user = await auth.auth_callback(mock_req)
+            assert user["sub"] == "u1"
+            assert mock_req.session["user"]["sub"] == "u1"
+
+            # Failure
+            auth.oauth.oidc.authorize_access_token = AsyncMock(return_value={})
+            user = await auth.auth_callback(mock_req)
+            assert user is None
+
+            # 3. Test get_current_user returns None
+            mock_req.session = {}
+            mock_req.headers = {}
+            assert auth.get_current_user(mock_req) is None
+
+            # 4. Test logout
+            mock_req.session = {"user": "data"}
+            auth.logout(mock_req)
+            assert "user" not in mock_req.session

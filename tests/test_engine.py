@@ -1,4 +1,7 @@
 import uuid
+import os
+import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -648,3 +651,26 @@ class TestEngine:
         # Create a window that matches current time
         windows = [{"days": [day], "hours": ["00:00", "23:59"]}]
         assert engine._is_within_execution_window(windows) is True
+
+    def test_project_lock_distributed_retry(self, setup):
+        engine, _, _, _ = setup
+        repo = MagicMock()
+        # First 2 times returns False, then True
+        repo.acquire_lock.side_effect = [False, False, True]
+        engine.repository = repo
+        
+        with patch("time.sleep") as mock_sleep:
+            with engine.project_lock("p1", timeout=1):
+                pass
+            assert mock_sleep.call_count == 2
+
+    def test_project_lock_distributed_timeout(self, setup):
+        engine, _, _, _ = setup
+        repo = MagicMock()
+        repo.acquire_lock.return_value = False
+        engine.repository = repo
+        
+        with patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="Could not acquire distributed lock"):
+                with engine.project_lock("p1", timeout=0.1):
+                    pass
