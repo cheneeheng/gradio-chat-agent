@@ -56,7 +56,7 @@ class TestUIController:
         engine.registry.list_actions.return_value = []
 
         res = controller.refresh_ui(pid, uid)
-        assert len(res) == 10
+        assert len(res) == 11
         assert res[0] == {}
         assert res[5] == {} # last_intent
         assert res[6] == {} # last_result

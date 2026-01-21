@@ -33,20 +33,23 @@ from gradio_chat_agent.utils import SecretManager
 class SQLStateRepository(StateRepository):
     """Production-ready SQL persistence layer."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, auto_create_tables: bool = True):
         """Initialize the repository with a database URL.
 
         Args:
             database_url: SQLAlchemy connection string.
+            auto_create_tables: If True, calls Base.metadata.create_all.
+                Set to False when using Alembic migrations.
         """
         self.engine = create_engine(database_url)
-        # In a real prod env, use Alembic. For now, auto-create.
-        Base.metadata.create_all(self.engine)
+        if auto_create_tables:
+            Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(bind=self.engine)
         self.secrets = SecretManager()
 
-        # Ensure default project exists
-        self._ensure_project("default_project")
+        # Ensure default project exists if we are auto-creating tables
+        if auto_create_tables:
+            self._ensure_project("default_project")
 
     def _ensure_project(self, project_id: str):
         """Ensures a project exists in the database.

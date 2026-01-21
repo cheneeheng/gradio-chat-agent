@@ -71,6 +71,7 @@ class UIController:
         self.engine = engine
         self.adapter = adapter
         self.binder = UIBinder()
+        self.auth_manager = None # Set by app.py
 
     def fetch_state(self, pid: str) -> dict:
         """Fetch latest state components for a project."""
@@ -89,8 +90,14 @@ class UIController:
         members = self.engine.repository.get_project_members(pid)
         return [[m["user_id"], m["role"]] for m in members]
 
-    def refresh_ui(self, pid: str, uid: str):
+    def refresh_ui(self, pid: str, uid: str, request: gr.Request = None):
         """Refresh all UI components."""
+        current_user = None
+        if self.auth_manager and request:
+            current_user = self.auth_manager.get_current_user(request)
+            if current_user:
+                uid = current_user.get("sub") or current_user.get("preferred_username") or uid
+
         state = self.fetch_state(pid)
 
         # Resolve roles for the user
@@ -112,6 +119,12 @@ class UIController:
         facts_data = self.fetch_facts_df(pid, uid)
         members_data = self.fetch_members_df(pid)
         updates = self.binder.get_updates(state)
+        
+        # Determine Login Status HTML
+        user_display = f"**User:** {uid} ({', '.join(user_roles)})"
+        if current_user:
+            user_display += " (Authenticated via OIDC)"
+        
         return (
             state,
             {},
@@ -123,6 +136,7 @@ class UIController:
             STATUS_READY_HTML,
             None,  # session_token_state
             None,  # session_token_display
+            user_display,
             *updates,
         )
 
@@ -157,8 +171,13 @@ class UIController:
             self.engine.repository.remove_project_member(pid, target_uid)
         return self.fetch_members_df(pid), ""
 
-    def on_submit(self, message_data, history, pid, uid, mode):
+    def on_submit(self, message_data, history, pid, uid, mode, request: gr.Request = None):
         """Main handler for chat message submission."""
+        if self.auth_manager and request:
+            current_user = self.auth_manager.get_current_user(request)
+            if current_user:
+                uid = current_user.get("sub") or current_user.get("preferred_username") or uid
+
         # Parse MultimodalTextbox input
         if isinstance(message_data, dict):
             message = message_data.get("text", "")
@@ -383,8 +402,13 @@ class UIController:
             *updates,
         )
 
-    def on_approve_plan(self, plan, history, pid, uid):
+    def on_approve_plan(self, plan, history, pid, uid, request: gr.Request = None):
         """Handler for approving a pending plan."""
+        if self.auth_manager and request:
+            current_user = self.auth_manager.get_current_user(request)
+            if current_user:
+                uid = current_user.get("sub") or current_user.get("preferred_username") or uid
+
         if not plan:
             state = self.fetch_state(pid)
             updates = self.binder.get_updates(state)
@@ -457,18 +481,20 @@ class UIController:
         )
 
 
-def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
+def create_ui(engine: ExecutionEngine, adapter: AgentAdapter, auth_manager=None) -> gr.Blocks:
     """Constructs the Gradio UI and sets up event handlers.
 
     Args:
         engine: The authoritative execution engine for state mutations.
         adapter: The chat agent adapter for natural language interpretation.
+        auth_manager: Optional manager for OIDC authentication.
 
     Returns:
         A Gradio gr.Blocks object containing the application layout.
     """
     api = ApiEndpoints(engine)
     controller = UIController(engine, adapter)
+    controller.auth_manager = auth_manager
     theme = AgentTheme()
 
     with gr.Blocks(
@@ -649,6 +675,9 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                             placeholder="No active session token",
                         )
                         mock_login_btn = gr.Button("Mock Login (Set Token)")
+                        
+                        oidc_login_btn = gr.Button("Login via OIDC", variant="primary", visible=False)
+                        gr.Markdown("Note: OIDC login will redirect you.")
 
         # --- Event Bindings ---
         bound_outputs = controller.binder.get_bound_components()
@@ -668,8 +697,25 @@ def create_ui(engine: ExecutionEngine, adapter: AgentAdapter) -> gr.Blocks:
                 status_indicator,
                 session_token_state,
                 session_token_display,
+                user_info,
                 *bound_outputs,
             ],
+        )
+        
+        # Show OIDC login button if enabled
+        def check_oidc():
+            if controller.auth_manager and controller.auth_manager.enabled:
+                return gr.update(visible=True)
+            return gr.update(visible=False)
+            
+        demo.load(check_oidc, inputs=[], outputs=[oidc_login_btn])
+
+        # OIDC Login Button Click (External Redirect)
+        oidc_login_btn.click(
+            None,
+            inputs=[],
+            outputs=[],
+            js="() => { window.location.href = '/login'; }"
         )
 
         # Chat

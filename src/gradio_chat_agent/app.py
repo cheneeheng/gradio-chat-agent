@@ -91,15 +91,8 @@ def bootstrap_admin(repository: SQLStateRepository):
         repository.add_project_member("default_project", "admin", "admin")
 
 
-def create_app() -> FastAPI:
-    """Factory function to create and configure the FastAPI application.
-
-    This is used by production ASGI servers like Gunicorn/Uvicorn with
-    multiple worker processes.
-    """
-    setup_logging()
-
-    # 1. Setup Registry
+def create_registry() -> InMemoryRegistry:
+    """Creates and populates the component and action registry."""
     registry = InMemoryRegistry()
 
     # System Actions
@@ -132,6 +125,19 @@ def create_app() -> FastAPI:
     registry.register_action(
         sync_browser_state_action, sync_browser_state_handler
     )
+    return registry
+
+
+def create_app() -> FastAPI:
+    """Factory function to create and configure the FastAPI application.
+
+    This is used by production ASGI servers like Gunicorn/Uvicorn with
+    multiple worker processes.
+    """
+    setup_logging()
+
+    # 1. Setup Registry
+    registry = create_registry()
 
     # 2. Setup Persistence
     db_url = os.environ.get(
@@ -155,11 +161,40 @@ def create_app() -> FastAPI:
     # 4. Setup Agent
     adapter = OpenAIAgentAdapter()
 
-    # 5. Build UI
-    demo = create_ui(engine, adapter)
-
-    # 6. Create FastAPI App and mount everything
+    # 5. Create FastAPI App
     app = FastAPI()
+
+    # 6. Setup Auth
+    from gradio_chat_agent.auth.manager import AuthManager
+    from starlette.requests import Request
+    from starlette.responses import RedirectResponse
+    
+    auth_manager = AuthManager(app)
+
+    @app.get("/login")
+    async def login(request: Request):
+        redirect_uri = str(request.url_for("auth_callback"))
+        return await auth_manager.login(request, redirect_uri)
+
+    @app.get("/auth", name="auth_callback")
+    async def auth_callback(request: Request):
+        user = await auth_manager.auth_callback(request)
+        if user:
+            return RedirectResponse(url="/")
+        return {"error": "Authentication failed"}
+
+    @app.get("/logout")
+    async def logout(request: Request):
+        auth_manager.logout(request)
+        return RedirectResponse(url="/")
+
+    @app.get("/me")
+    async def me(request: Request):
+        user = auth_manager.get_current_user(request)
+        return {"user": user}
+
+    # 7. Build UI
+    demo = create_ui(engine, adapter, auth_manager=auth_manager)
 
     # --- CORS Configuration ---
     allowed_origins = os.environ.get("GRADIO_ALLOWED_ORIGINS", "*").split(",")
@@ -191,7 +226,8 @@ def create_app() -> FastAPI:
         )
 
     # Attach scheduler to app state for lifecycle management
-    scheduler = SchedulerWorker(engine)
+    use_huey = os.environ.get("USE_HUEY", "False").lower() == "true"
+    scheduler = SchedulerWorker(engine, use_huey=use_huey)
     app.state.scheduler = scheduler
 
     # Setup Browser Automation Observer

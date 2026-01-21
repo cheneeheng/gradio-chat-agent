@@ -20,15 +20,17 @@ logger = get_logger(__name__)
 class SchedulerWorker:
     """Worker that polls for and executes scheduled actions."""
 
-    def __init__(self, engine: ExecutionEngine, poll_interval: int = 60):
+    def __init__(self, engine: ExecutionEngine, poll_interval: int = 60, use_huey: bool = False):
         """Initializes the scheduler worker.
 
         Args:
             engine: The authoritative execution engine.
             poll_interval: How often to poll for schedule updates (seconds).
+            use_huey: If True, offloads execution to Huey background worker.
         """
         self.engine = engine
         self.poll_interval = poll_interval
+        self.use_huey = use_huey
         self.scheduler = BackgroundScheduler()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -98,6 +100,14 @@ class SchedulerWorker:
         project_id = schedule_config["project_id"]
         action_id = schedule_config["action_id"]
         inputs = schedule_config.get("inputs", {})
+
+        if self.use_huey:
+            from gradio_chat_agent.execution.tasks import execute_background_action
+            logger.info(f"Offloading scheduled action {action_id} to Huey.")
+            execute_background_action(
+                project_id, action_id, inputs, "system_scheduler", "schedule"
+            )
+            return
 
         logger.info(
             f"Triggering scheduled action: {action_id} for project {project_id}"

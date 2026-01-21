@@ -119,18 +119,18 @@
 
 ## 11. Identity & Access (OIDC)
 
-- [ ] **OIDC Integration:** Replace the mock authentication with a real OIDC/OAuth2 provider integration (e.g., using `Authlib`).
+- [x] **OIDC Integration:** Replace the mock authentication with a real OIDC/OAuth2 provider integration (e.g., using `Authlib`).
 - [x] **User Model:** Implement a formal `User` table in the `SQLStateRepository` to store credentials, profiles, and organization links.
 - [x] **Default Admin Bootstrap:** Implement logic to create a default `admin/admin` account on startup, guarded by the `ALLOW_DEFAULT_ADMIN` environment variable.
 - [x] **RBAC Role Enforcement:** Update the `ExecutionEngine` to strictly validate user roles against action risk: `viewer` (no execution), `operator` (low/medium risk only), `admin` (full access).
 - [x] **RBAC Mapping:** Implement a dynamic mapping system to resolve Gradio session users to specific project roles (viewer, operator, admin).
-- [ ] **Session Management:** Secure the API endpoints with proper Bearer token validation linked to the OIDC provider.
+- [x] **Session Management:** Secure the API endpoints with proper Bearer token validation linked to the OIDC provider.
 
 ## 12. Deployment & Infrastructure
 
 - [x] **Production Dockerfile:** Create a root `Dockerfile` using `uv` and multi-stage builds, following the structure in the deployment guide.
 - [x] **Health Check Endpoint:** Implement a dedicated FastAPI-based health endpoint (e.g., `/health`) to verify database and engine readiness.
-- [ ] **Alembic Migrations:** Set up Alembic to manage database schema changes instead of relying on `metadata.create_all`.
+- [x] **Alembic Migrations:** Set up Alembic to manage database schema changes instead of relying on `metadata.create_all`.
 - [x] **Gunicorn/Uvicorn Wrapper:** Update the entry point to support production-grade ASGI servers with multiple worker processes.
 
 ## 13. Infrastructure & Scaling
@@ -138,6 +138,6 @@
 - [x] **Transactional Atomicity:** Update the `ExecutionEngine` and `SQLStateRepository` to ensure that the creation of a new `StateSnapshot` and the recording of the `ExecutionResult` occur within a single database transaction. (Infrastructure & Scaling)
 - [x] **State Reconstruction (Time Travel):** Implement logic to reconstruct the application state at any point in time by replaying `ExecutionResult` diffs from an initial snapshot.
 - [x] **Differential Snapshots:** Optimize storage by implementing differential snapshots (storing only deltas) with periodic full-state "checkpoints."
-- [ ] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
+- [x] **Worker Pool & Job Queue:** Transition automated tasks (Schedules and Webhooks) to a dedicated background worker pool (e.g., using Redis and a job queue).
 - [x] **Distributed Locking:** Replace the local `threading.Lock` in `ExecutionEngine` with a distributed lock (e.g., via Redis or Database) to support multi-instance deployments. (Section 13)
 - [x] **Environment-Aware Server Initialization:** Update `app.py` to respect `GRADIO_SERVER_NAME` and `GRADIO_SERVER_PORT` environment variables, enabling flexible deployment in containerized environments (Docker/K8s).

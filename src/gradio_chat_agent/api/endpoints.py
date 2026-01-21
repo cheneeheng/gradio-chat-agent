@@ -255,6 +255,7 @@ class ApiEndpoints:
         webhook_id: str,
         payload: dict[str, Any],
         signature: str,
+        use_huey: bool = False,
     ) -> dict[str, Any]:
         """Executes an action triggered by a webhook.
 
@@ -262,6 +263,7 @@ class ApiEndpoints:
             webhook_id: The ID of the webhook to trigger.
             payload: The JSON payload from the external system.
             signature: The signature string for verification (must match secret).
+            use_huey: If True, offloads to Huey background worker.
 
         Returns:
             The execution result.
@@ -330,6 +332,21 @@ class ApiEndpoints:
                 ).model_dump(mode="json")
 
         # 4. Execute
+        if use_huey:
+            from gradio_chat_agent.execution.tasks import execute_background_action
+            execute_background_action(
+                webhook["project_id"], 
+                webhook["action_id"], 
+                inputs, 
+                "webhook", 
+                "webhook"
+            )
+            return ApiResponse(
+                code=0,
+                message="Action offloaded to background worker.",
+                data={"status": "pending_background"}
+            ).model_dump(mode="json")
+
         intent = ChatIntent(
             type=IntentType.ACTION_CALL,
             request_id=str(uuid.uuid4()),

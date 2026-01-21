@@ -20,11 +20,13 @@ project_app = typer.Typer(help="Manage projects")
 user_app = typer.Typer(help="Manage users")
 webhook_app = typer.Typer(help="Manage webhooks")
 token_app = typer.Typer(help="Manage API tokens")
+worker_app = typer.Typer(help="Manage background worker")
 
 app.add_typer(project_app, name="project")
 app.add_typer(user_app, name="user")
 app.add_typer(webhook_app, name="webhook")
 app.add_typer(token_app, name="token")
+app.add_typer(worker_app, name="worker")
 
 
 def get_repo():
@@ -206,6 +208,18 @@ def token_revoke(
     repo = get_repo()
     repo.revoke_api_token(token_id)
     typer.echo(f"Token revoked: {token_id}")
+
+
+@worker_app.command("start")
+def worker_start(
+    workers: Annotated[int, typer.Option(help="Number of worker threads")] = 1,
+):
+    """Starts the Huey background worker."""
+    from gradio_chat_agent.execution.tasks import huey
+    typer.echo(f"Starting Huey worker with {workers} threads...")
+    from huey.consumer import Consumer
+    consumer = huey.create_consumer(workers=workers)
+    consumer.run()
 
 
 if __name__ == "__main__":

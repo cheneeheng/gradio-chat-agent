@@ -6,6 +6,9 @@
 **/*.sqlite3
 **/*.sqlite
 
+# DB
+**/*.db
+
 # UV
 .uv-cache/
 
