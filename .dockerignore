@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.uv-cache
+gradio_chat_agent.sqlite3
+.env
+docs
+tests
+examples
+agent-tasks
+next-steps.md

@@ -1,0 +1,1335 @@
+"""Core execution logic for the Gradio Chat Agent.
+
+This module contains the ExecutionEngine, which serves as the authoritative
+gatekeeper for all state mutations. It enforces governance policies, validates
+inputs, checks permissions, and records audit logs.
+"""
+
+import ast
+import copy
+import hashlib
+import os
+import threading
+import time
+import uuid
+from datetime import datetime
+from typing import Any, Callable, Optional
+
+import jsonschema
+from pydantic import BaseModel
+
+from gradio_chat_agent.models.enums import (
+    ActionRisk,
+    ExecutionStatus,
+    IntentType,
+)
+from gradio_chat_agent.models.execution_result import (
+    ExecutionError,
+    ExecutionResult,
+)
+from gradio_chat_agent.models.intent import ChatIntent
+from gradio_chat_agent.models.plan import ExecutionPlan
+from gradio_chat_agent.models.state_snapshot import StateSnapshot
+from gradio_chat_agent.observability.logging import get_logger
+from gradio_chat_agent.observability.metrics import (
+    BUDGET_CONSUMPTION_TOTAL,
+    ENGINE_EXECUTION_DURATION_SECONDS,
+    ENGINE_EXECUTION_TOTAL,
+)
+from gradio_chat_agent.persistence.repository import StateRepository
+from gradio_chat_agent.registry.abstract import Registry
+from gradio_chat_agent.utils import compute_checksum, compute_state_diff
+
+
+logger = get_logger(__name__)
+
+
+class EngineConfig(BaseModel):
+    """Configuration for the Execution Engine.
+
+    Attributes:
+        require_confirmed_for_confirmation_required: If True, strictly enforces
+            the 'confirmed' flag for actions that require it.
+    """
+
+    require_confirmed_for_confirmation_required: bool = True
+
+
+class ExecutionEngine:
+    """The central authority for executing intents and managing state.
+
+    The engine orchestrates the flow of:
+    1. Intent validation.
+    2. Permission and policy checks.
+    3. State loading and locking.
+    4. Action execution (via handlers).
+    5. Persistence of results and snapshots.
+    6. Post-execution hooks (side effects).
+    """
+
+    def __init__(
+        self,
+        registry: Registry,
+        repository: StateRepository,
+        config: Optional[EngineConfig] = None,
+    ):
+        """Initializes the engine with necessary dependencies.
+
+        Args:
+            registry: Source of truth for component/action definitions.
+            repository: Persistence layer for state and history.
+            config: Optional configuration for the engine.
+        """
+        self.registry = registry
+        self.repository = repository
+        self.config = config or EngineConfig()
+        self.project_locks: dict[str, threading.Lock] = {}
+        self._global_lock = threading.Lock()
+        self.post_execution_hooks: list[
+            Callable[[str, ExecutionResult], None]
+        ] = []
+
+    def add_post_execution_hook(
+        self, hook: Callable[[str, ExecutionResult], None]
+    ):
+        """Registers a callback to be executed after a successful state commit.
+
+        Hooks are skipped during simulation or if execution fails/is rejected.
+
+        Args:
+            hook: A callable that accepts (project_id, execution_result).
+        """
+        self.post_execution_hooks.append(hook)
+
+    def resolve_user_roles(
+        self, project_id: str, user_id: str | None
+    ) -> list[str]:
+        """Resolves the roles for a user in a specific project.
+
+        Role resolution priority:
+        1. Explicit project membership (stored in the database).
+        2. Dynamic role mapping rules defined in the project policy.
+        3. Default role (['viewer']).
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The unique identifier of the user.
+
+        Returns:
+            A list of role identifiers.
+        """
+        if not user_id:
+            return ["viewer"]
+
+        # 1. Check explicit membership
+        members = self.repository.get_project_members(project_id)
+        for m in members:
+            if m["user_id"] == user_id:
+                return [m["role"]]
+
+        # 2. Check dynamic mapping rules
+        user = self.repository.get_user(user_id)
+        if user:
+            limits = self.repository.get_project_limits(project_id)
+            mappings = limits.get("role_mappings", [])
+
+            # Context for evaluation
+            # Convert dict to a simple object-like structure for dot access in expressions
+            class UserProxy:
+                def __init__(self, data):
+                    for k, v in data.items():
+                        setattr(self, k, v)
+
+            proxy = UserProxy(user)
+
+            for mapping in mappings:
+                condition = mapping.get("condition")
+                role = mapping.get("role")
+                if condition and role:
+                    try:
+                        if self._safe_eval(condition, {"user": proxy}):
+                            return [role]
+                    except Exception as e:
+                        logger.warning(
+                            f"Error evaluating role mapping for user {user_id}: {str(e)}"
+                        )
+
+        return ["viewer"]
+
+    def _dispatch_post_execution(
+        self, project_id: str, result: ExecutionResult
+    ):
+        """Triggers all registered post-execution hooks.
+
+        Args:
+            project_id: The project context.
+            result: The successful execution result.
+        """
+        if result.simulated or result.status != ExecutionStatus.SUCCESS:
+            return
+
+        for hook in self.post_execution_hooks:
+            try:
+                hook(project_id, result)
+            except Exception as e:
+                logger.error(
+                    f"Error in post_execution hook for {result.action_id}: {str(e)}",
+                    extra={
+                        "extra_fields": {
+                            "event": "hook_error",
+                            "project_id": project_id,
+                            "action_id": result.action_id,
+                            "request_id": result.request_id,
+                        }
+                    },
+                )
+
+    def _get_project_lock(self, project_id: str) -> threading.Lock:
+        """Retrieves (or creates) a threading lock for a specific project.
+
+        Args:
+            project_id: The ID of the project to lock.
+
+        Returns:
+            A threading.Lock object dedicated to the project.
+        """
+        with self._global_lock:
+            if project_id not in self.project_locks:
+                self.project_locks[project_id] = threading.Lock()
+            return self.project_locks[project_id]
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def project_lock(self, project_id: str, timeout: int = 10):
+        """Context manager for project-level locking.
+
+        Uses both local threading locks and distributed database locks.
+        """
+        local_lock = self._get_project_lock(project_id)
+        holder_id = f"{os.getpid()}:{threading.get_ident()}"
+
+        start_wait = time.time()
+        if not local_lock.acquire(timeout=timeout):
+            raise RuntimeError(
+                f"Could not acquire local lock for project {project_id} within {timeout}s"
+            )
+
+        try:
+            # Acquire distributed lock
+            acquired = False
+            while time.time() - start_wait < timeout:
+                if self.repository.acquire_lock(
+                    project_id, holder_id, timeout_seconds=timeout
+                ):
+                    acquired = True
+                    break
+                time.sleep(0.1)
+
+            if not acquired:
+                raise RuntimeError(
+                    f"Could not acquire distributed lock for project {project_id} within {timeout}s"
+                )
+
+            yield
+        finally:
+            self.repository.release_lock(project_id, holder_id)
+            local_lock.release()
+
+    def _is_within_execution_window(self, windows: list[dict]) -> bool:
+        """Checks if the current time is within any of the allowed windows.
+
+        Args:
+            windows: A list of window dictionaries, each containing:
+                - days: List of lowercase day abbreviations (mon, tue, ...).
+                - hours: List of two strings [HH:MM, HH:MM] in 24h format.
+
+        Returns:
+            True if current UTC time is within an allowed window, False otherwise.
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        current_day = now.strftime("%a").lower()
+        current_time_str = now.strftime("%H:%M")
+
+        for window in windows:
+            allowed_days = window.get("days", [])
+            if current_day not in allowed_days:
+                continue
+
+            allowed_hours = window.get("hours", [])
+            if len(allowed_hours) == 2:
+                start_str, end_str = allowed_hours
+                if start_str <= current_time_str <= end_str:
+                    return True
+
+        return False
+
+    def _safe_eval(self, expr: str, context: dict) -> Any:
+        """Safely evaluates a Python expression using AST.
+
+        Only allows a very restricted subset of Python:
+        - Constant literals (numbers, strings, booleans, None).
+        - Attribute access and Subscripting (for dict/object access).
+        - Basic binary/unary operators.
+        - Name lookups in the provided context.
+        - NO function calls, NO comprehensions, NO imports.
+
+        Args:
+            expr: The expression string to evaluate.
+            context: The variables available to the expression.
+
+        Returns:
+            The result of the evaluation.
+
+        Raises:
+            ValueError: If the expression contains forbidden nodes.
+        """
+        tree = ast.parse(expr, mode="eval")
+
+        # Define allowed node types
+        allowed_nodes = (
+            ast.Expression,
+            ast.Constant,
+            ast.Name,
+            ast.Load,
+            ast.Attribute,
+            ast.Subscript,
+            ast.Index,  # For older Python versions
+            ast.Slice,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.Compare,
+            ast.BoolOp,
+            ast.And,
+            ast.Or,
+            ast.Not,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.Mod,
+            ast.Pow,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Is,
+            ast.IsNot,
+            ast.In,
+            ast.NotIn,
+            ast.USub,
+            ast.UAdd,
+            ast.Call,
+        )
+
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                raise ValueError(
+                    f"Forbidden expression node: {type(node).__name__}"
+                )
+
+        # Compile and evaluate in a restricted environment
+        code = compile(tree, filename="<safe_eval>", mode="eval")
+        return eval(code, {"__builtins__": {}}, context)
+
+    def execute_plan(
+        self,
+        project_id: str,
+        plan: ExecutionPlan,
+        user_roles: Optional[list[str]] = None,
+        simulate: bool = False,
+        user_id: Optional[str] = None,
+    ) -> list[ExecutionResult]:
+        """Executes a multi-step plan sequentially.
+
+        Args:
+            project_id: The ID of the project context.
+            plan: The execution plan containing multiple steps.
+            user_roles: List of roles held by the requesting user.
+            simulate: If True, performs a dry-run without persisting changes.
+            user_id: The ID of the user executing the plan.
+
+        Returns:
+            A list of ExecutionResult objects for all attempted steps.
+        """
+        results = []
+
+        # Determine execution mode from first step or default
+        mode = "assisted"
+        if plan.steps:
+            mode = plan.steps[0].execution_mode or "assisted"
+
+        # Set limits
+        max_steps = 5  # Default/Assisted
+        if mode == "interactive":
+            max_steps = 1
+        elif mode == "autonomous":
+            max_steps = 10
+
+        if len(plan.steps) > max_steps:
+            error_result = self._create_rejection(
+                project_id,
+                plan.steps[0],
+                f"Plan exceeds step limit for {mode} mode ({len(plan.steps)} > {max_steps}).",
+                code="plan_limit_exceeded",
+            )
+            return [error_result]
+
+        current_simulated_state = None
+
+        for step in plan.steps:
+            # Execute the step
+            result = self.execute_intent(
+                project_id=project_id,
+                intent=step,
+                user_roles=user_roles,
+                simulate=simulate,
+                override_state=current_simulated_state,
+                user_id=user_id,
+            )
+            results.append(result)
+
+            # Abort on failure or rejection
+            if result.status != ExecutionStatus.SUCCESS:
+                break
+
+            # If simulating, update the simulated state for the next step
+            if simulate and result.status == ExecutionStatus.SUCCESS:
+                if hasattr(result, "_simulated_state"):
+                    current_simulated_state = result._simulated_state
+
+        return results
+
+    def _evaluate_policy_rules(
+        self,
+        project_id: str,
+        intent: ChatIntent,
+        current_state: dict,
+        user_id: Optional[str],
+        user_roles: list[str],
+    ) -> Optional[ExecutionResult]:
+        """Evaluates custom policy rules defined in the project policy.
+
+        Args:
+            project_id: The ID of the project.
+            intent: The requested intent.
+            current_state: The current application state.
+            user_id: The ID of the user.
+            user_roles: The resolved roles for the user.
+
+        Returns:
+            An ExecutionResult if a rule triggers a rejection or approval requirement,
+            otherwise None.
+        """
+        limits = self.repository.get_project_limits(project_id)
+        rules = limits.get("rules", [])
+
+        # Construct evaluation context
+        user_obj = None
+        if user_id:
+            user_data = self.repository.get_user(user_id)
+            if user_data:
+
+                class UserProxy:
+                    def __init__(self, data):
+                        for k, v in data.items():
+                            setattr(self, k, v)
+
+                user_obj = UserProxy(user_data)
+
+        eval_context = {
+            "state": current_state,
+            "inputs": intent.inputs or {},
+            "user": user_obj,
+            "roles": user_roles,
+            "action_id": intent.action_id,
+        }
+
+        for rule in rules:
+            condition = rule.get("condition")
+            effect = rule.get("effect")
+            if not condition or not effect:
+                continue
+
+            try:
+                if self._safe_eval(condition, eval_context):
+                    message = (
+                        rule.get("message")
+                        or f"Rule triggered: {rule.get('id')}"
+                    )
+
+                    if effect == "reject":
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            message,
+                            code="policy_rule_rejection",
+                            user_id=user_id,
+                        )
+                    elif effect == "require_approval":
+                        if not intent.confirmed:
+                            result = ExecutionResult(
+                                request_id=intent.request_id,
+                                user_id=user_id,
+                                action_id=intent.action_id or "unknown",
+                                status=ExecutionStatus.PENDING_APPROVAL,
+                                message=message,
+                                state_snapshot_id="none",
+                            )
+                            self.repository.save_execution(project_id, result)
+                            return result
+            except Exception as e:
+                logger.warning(
+                    f"Error evaluating policy rule {rule.get('id')}: {str(e)}"
+                )
+
+        return None
+
+    def execute_intent(
+        self,
+        project_id: str,
+        intent: ChatIntent,
+        user_roles: Optional[list[str]] = None,
+        simulate: bool = False,
+        override_state: Optional[dict] = None,
+        user_id: Optional[str] = None,
+    ) -> ExecutionResult:
+        """Executes a single intent against a project's state.
+
+        This method validates the intent, checks permissions, executes the
+        action (if valid), and persists the result.
+
+        Args:
+            project_id: The ID of the project context.
+            intent: The structured intent object to execute.
+            user_roles: List of roles held by the requesting user.
+                Defaults to ['viewer'].
+            simulate: If True, performs a dry-run without persisting changes.
+            override_state: Optional state dict to use instead of DB state (for chained simulation).
+            user_id: The ID of the user executing the intent (required for memory actions).
+
+        Returns:
+            An ExecutionResult object indicating success, rejection, or failure.
+        """
+        start_time = time.perf_counter()
+
+        def get_duration():
+            return (time.perf_counter() - start_time) * 1000
+
+        if user_roles is None:
+            user_roles = ["viewer"]
+
+        # 1. Validation of Intent Structure
+        if intent.type != IntentType.ACTION_CALL:
+            return self._create_rejection(
+                project_id,
+                intent,
+                "Engine only executes action_call intents.",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
+            )
+
+        if not intent.action_id:
+            return self._create_rejection(
+                project_id,
+                intent,
+                "Missing action_id.",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
+            )
+
+        # 1.3 Project Lifecycle Check
+        if self.repository.is_project_archived(project_id):
+            return self._create_rejection(
+                project_id,
+                intent,
+                f"Project {project_id} is archived and does not allow executions.",
+                code="project_archived",
+                user_id=user_id,
+                execution_time_ms=get_duration(),
+            )
+
+        # 1.5 Execution Window Check
+        limits = self.repository.get_project_limits(project_id)
+        windows = limits.get("execution_windows", {}).get("allowed")
+        if windows and not simulate:
+            if not self._is_within_execution_window(windows):
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    "Outside of allowed execution window.",
+                    code="execution_window_violation",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                )
+
+        # Handle Memory Actions (System Actions that write to Facts table)
+        if intent.action_id in ["memory.remember", "memory.forget"]:
+            if not user_id:
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    "User ID required for memory actions.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                )
+
+            if simulate:
+                return ExecutionResult(
+                    request_id=intent.request_id,
+                    user_id=user_id,
+                    action_id=intent.action_id,
+                    status=ExecutionStatus.SUCCESS,
+                    message="Simulated memory update.",
+                    state_snapshot_id="simulated",
+                    simulated=True,
+                    execution_time_ms=get_duration(),
+                )
+
+            inputs = intent.inputs or {}
+            try:
+                if intent.action_id == "memory.remember":
+                    self.repository.save_session_fact(
+                        project_id,
+                        user_id,
+                        inputs.get("key"),  # pyright: ignore[reportArgumentType]; The error will be caugt by the exception.
+                        inputs.get("value"),
+                    )
+                    msg = f"Remembered: {inputs.get('key')} = {inputs.get('value')}"
+                else:  # memory.forget
+                    self.repository.delete_session_fact(
+                        project_id,
+                        user_id,
+                        inputs.get("key"),  # pyright: ignore[reportArgumentType]; The error will be caugt by the exception.
+                    )
+                    msg = f"Forgot: {inputs.get('key')}"
+
+                # Log execution, but no state diff for components
+                result = ExecutionResult(
+                    request_id=intent.request_id,
+                    user_id=user_id,
+                    action_id=intent.action_id,
+                    status=ExecutionStatus.SUCCESS,
+                    message=msg,
+                    state_snapshot_id="no_snapshot",  # System action
+                    state_diff=[],
+                    execution_time_ms=get_duration(),
+                )
+                self.repository.save_execution(project_id, result)
+                return result
+
+            except Exception as e:
+                return self._create_failure(
+                    project_id,
+                    intent,
+                    f"Memory error: {str(e)}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                )
+
+        # 2. Acquire Lock
+        with self.project_lock(project_id):
+            # 3. Load State
+            if override_state is not None:
+                current_snapshot = StateSnapshot(
+                    snapshot_id="simulated_prev", components=override_state
+                )
+            else:
+                current_snapshot = self.repository.get_latest_snapshot(
+                    project_id
+                )
+                if not current_snapshot:
+                    # Initialize empty state if none exists
+                    current_snapshot = StateSnapshot(
+                        snapshot_id=str(uuid.uuid4()), components={}
+                    )
+
+                # --- State Integrity Verification ---
+                if current_snapshot.checksum:
+                    actual_checksum = compute_checksum(
+                        current_snapshot.components
+                    )
+                    if actual_checksum != current_snapshot.checksum:
+                        return self._create_failure(
+                            project_id,
+                            intent,
+                            f"State integrity violation: Snapshot {current_snapshot.snapshot_id} has been tampered with.",
+                            code="integrity_violation",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                        )
+
+            # 4. Resolve Action
+            action = self.registry.get_action(intent.action_id)
+            if not action:
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    f"Action {intent.action_id} not found.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                )
+
+            # 4.5 Evaluate custom policy rules
+            rule_result = self._evaluate_policy_rules(
+                project_id,
+                intent,
+                current_snapshot.components,
+                user_id,
+                user_roles,
+            )
+            if rule_result:
+                return rule_result
+
+            action_cost = getattr(action, "cost", 1.0)
+
+            # 5. Authorization & Governance
+            # Fetch Limits
+            limits = self.repository.get_project_limits(project_id)
+
+            # Rate Limiting: Check actions/minute
+            rpm_limit = (
+                limits.get("limits", {}).get("rate", {}).get("per_minute")
+            )
+            if rpm_limit and not simulate:
+                recent_count = self.repository.count_recent_executions(
+                    project_id, minutes=1
+                )
+                if recent_count >= rpm_limit:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        f"Rate limit exceeded ({rpm_limit}/min).",
+                        code="rate_limit",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
+                    )
+
+            # Rate Limiting: Check actions/hour
+            rph_limit = (
+                limits.get("limits", {}).get("rate", {}).get("per_hour")
+            )
+            if rph_limit and not simulate:
+                recent_count = self.repository.count_recent_executions(
+                    project_id, minutes=60
+                )
+                if recent_count >= rph_limit:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        f"Hourly rate limit exceeded ({rph_limit}/hour).",
+                        code="rate_limit",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
+                    )
+
+            # Budget Check
+            if not simulate:
+                daily_budget = (
+                    limits.get("limits", {}).get("budget", {}).get("daily")
+                )
+                if daily_budget is not None:
+                    current_usage = self.repository.get_daily_budget_usage(
+                        project_id
+                    )
+                    if current_usage + action_cost > daily_budget:
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            f"Daily budget exceeded ({current_usage:.1f} + {action_cost:.1f} > {daily_budget}).",
+                            code="budget_exceeded",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
+                        )
+
+            # --- RBAC Role Enforcement ---
+            if "admin" in user_roles:
+                # Admins have full access
+                pass
+            elif "operator" in user_roles:
+                # Operators can execute low and medium risk actions
+                if action.permission.risk == ActionRisk.HIGH:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        "Insufficient permissions: 'operator' role cannot execute high-risk actions.",
+                        code="permission_denied",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
+                    )
+            elif "viewer" in user_roles or not user_roles:
+                # Viewers cannot execute any actions
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    "Insufficient permissions: 'viewer' role cannot execute actions.",
+                    code="permission_denied",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+            else:
+                # Unknown role
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    f"Insufficient permissions: unknown roles {user_roles}.",
+                    code="permission_denied",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+
+            # Confirmation check
+            if self.config.require_confirmed_for_confirmation_required:
+                if (
+                    action.permission.confirmation_required
+                    or action.permission.risk == ActionRisk.HIGH
+                ):
+                    if not intent.confirmed:
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            "Confirmation required.",
+                            code="confirmation_required",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
+                        )
+
+            # Approval Workflow Check
+            if not simulate and not intent.confirmed:
+                approval_rules = limits.get("approvals", [])
+
+                for rule in approval_rules:
+                    min_cost = rule.get("min_cost", 0)
+                    required_role = rule.get("required_role", "admin")
+
+                    if (
+                        action_cost >= min_cost
+                        and required_role not in user_roles
+                    ):
+                        # This action triggers an approval requirement
+                        result = ExecutionResult(
+                            request_id=intent.request_id,
+                            user_id=user_id,
+                            action_id=intent.action_id,
+                            status=ExecutionStatus.PENDING_APPROVAL,
+                            message=f"Action requires approval from a {required_role} (Cost: {action_cost}).",
+                            state_snapshot_id="none",
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
+                        )
+                        # We save it to history so admins can see pending requests
+                        self.repository.save_execution(project_id, result)
+                        return result
+
+            # 6. Schema Validation
+            try:
+                jsonschema.validate(
+                    instance=intent.inputs or {}, schema=action.input_schema
+                )
+            except jsonschema.ValidationError as e:
+                return self._create_rejection(
+                    project_id,
+                    intent,
+                    f"Input validation failed: {e.message}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+
+            # 7. Precondition Check
+            # Safe evaluation context
+            eval_context = {
+                "state": current_snapshot.components,
+                "inputs": intent.inputs or {},
+            }
+            for precondition in action.preconditions:
+                try:
+                    if not self._safe_eval(precondition.expr, eval_context):
+                        return self._create_rejection(
+                            project_id,
+                            intent,
+                            f"Precondition failed: {precondition.description}",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
+                        )
+                except Exception as e:
+                    return self._create_rejection(
+                        project_id,
+                        intent,
+                        f"Error evaluating precondition {precondition.id}: {str(e)}",
+                        user_id=user_id,
+                        execution_time_ms=get_duration(),
+                        cost=action_cost,
+                    )
+
+            # 8. Execution
+            handler = self.registry.get_handler(intent.action_id)
+            if not handler:
+                return self._create_failure(
+                    project_id,
+                    intent,
+                    f"No handler registered for {intent.action_id}.",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+
+            try:
+                # Deep copy components to prevent mutation of the old snapshot object
+                # if the handler mutates in place (though handlers should be pure-ish)
+                components_copy = copy.deepcopy(current_snapshot.components)
+
+                # Create a temporary snapshot object for the handler to read
+                temp_snapshot = StateSnapshot(
+                    snapshot_id=current_snapshot.snapshot_id,
+                    timestamp=current_snapshot.timestamp,
+                    components=components_copy,
+                )
+
+                new_components, diffs, message = handler(
+                    intent.inputs or {}, temp_snapshot
+                )
+            except Exception as e:
+                return self._create_failure(
+                    project_id,
+                    intent,
+                    f"Handler error: {str(e)}",
+                    user_id=user_id,
+                    execution_time_ms=get_duration(),
+                    cost=action_cost,
+                )
+
+            # 8.5 Invariant Check
+            for component in self.registry.list_components():
+                for invariant in component.invariants:
+                    try:
+                        if not self._safe_eval(
+                            invariant.expr,
+                            {"state": new_components},
+                        ):
+                            return self._create_failure(
+                                project_id,
+                                intent,
+                                f"Invariant violated for {component.component_id}: {invariant.description}",
+                                code="invariant_violation",
+                                user_id=user_id,
+                                execution_time_ms=get_duration(),
+                                cost=action_cost,
+                            )
+                    except Exception as e:
+                        return self._create_failure(
+                            project_id,
+                            intent,
+                            f"Error evaluating invariant for {component.component_id}: {str(e)}",
+                            code="invariant_error",
+                            user_id=user_id,
+                            execution_time_ms=get_duration(),
+                            cost=action_cost,
+                        )
+
+            # 9. Commit
+            new_snapshot_id = (
+                str(uuid.uuid4()) if not simulate else "simulated"
+            )
+
+            # Decide if checkpoint or delta
+            # Heuristic: every 5th successful execution is a checkpoint
+            is_checkpoint = True
+            parent_id = None
+            if not simulate:
+                history = self.repository.get_execution_history(
+                    project_id, limit=10
+                )
+                success_count = sum(
+                    1 for e in history if e.status == ExecutionStatus.SUCCESS
+                )
+                if current_snapshot and success_count % 5 != 0:
+                    is_checkpoint = False
+                    parent_id = current_snapshot.snapshot_id
+
+            # Media Hashing
+            metadata = {}
+            metadata["cost"] = action_cost
+
+            if intent.media and intent.media.data:
+                media_hash = hashlib.sha256(
+                    intent.media.data.encode("utf-8")
+                ).hexdigest()
+                metadata["media_hash"] = media_hash
+                metadata["media_type"] = intent.media.type
+                metadata["media_mime"] = intent.media.mime_type
+
+            # Re-compute diffs if handler didn't provide them reliably,
+            # or just trust the handler. The Utils function is safer.
+            computed_diffs = compute_state_diff(
+                current_snapshot.components, new_components
+            )
+
+            result = ExecutionResult(
+                request_id=intent.request_id,
+                user_id=user_id,
+                action_id=intent.action_id,
+                status=ExecutionStatus.SUCCESS,
+                message=message or "Action executed successfully.",
+                state_snapshot_id=new_snapshot_id,
+                state_diff=computed_diffs,
+                intent=intent.model_dump(mode="json"),
+                simulated=simulate,
+                execution_time_ms=get_duration(),
+                cost=action_cost,
+                metadata=metadata,
+            )
+
+            # Metrics
+            if result.execution_time_ms is not None:
+                ENGINE_EXECUTION_DURATION_SECONDS.labels(
+                    action_id=intent.action_id
+                ).observe(result.execution_time_ms / 1000.0)
+            ENGINE_EXECUTION_TOTAL.labels(
+                status="success",
+                action_id=intent.action_id,
+                project_id=project_id,
+            ).inc()
+            if not simulate:
+                BUDGET_CONSUMPTION_TOTAL.labels(project_id=project_id).inc(
+                    action_cost
+                )
+
+            logger.info(
+                f"Execution successful: {intent.action_id}",
+                extra={
+                    "extra_fields": {
+                        "event": "execution_completed",
+                        "request_id": intent.request_id,
+                        "project_id": project_id,
+                        "user_id": user_id,
+                        "action_id": intent.action_id,
+                        "status": "success",
+                        "simulated": simulate,
+                        "duration_ms": result.execution_time_ms,
+                        "cost": result.cost,
+                    }
+                },
+            )
+
+            if simulate:
+                result._simulated_state = new_components
+                return result
+
+            new_snapshot = StateSnapshot(
+                snapshot_id=new_snapshot_id,
+                components=new_components,
+                checksum=compute_checksum(new_components),
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
+            )
+
+            self.repository.save_execution_and_snapshot(
+                project_id,
+                result,
+                new_snapshot,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
+            )
+
+            # 10. Dispatch Side Effects
+            self._dispatch_post_execution(project_id, result)
+
+            return result
+
+    def revert_to_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> ExecutionResult:
+        """Reverts the project state to a specific snapshot.
+
+        This creates a new snapshot with the content of the target snapshot
+        and logs a 'system.revert' execution.
+
+        Args:
+            project_id: The ID of the project.
+            snapshot_id: The ID of the snapshot to revert to.
+
+        Returns:
+            The execution result of the revert operation.
+        """
+        with self.project_lock(project_id):
+            # 1. Validation
+            target_snapshot = self.repository.get_snapshot(snapshot_id)
+            if not target_snapshot:
+                return self._create_failure(
+                    project_id,
+                    ChatIntent(
+                        type=IntentType.ACTION_CALL,
+                        request_id=str(uuid.uuid4()),
+                        action_id="system.revert",
+                    ),
+                    f"Snapshot {snapshot_id} not found.",
+                    code="not_found",
+                )
+
+            current_snapshot = self.repository.get_latest_snapshot(project_id)
+            if not current_snapshot:
+                # Should not happen if there is a history to revert to
+                current_snapshot = StateSnapshot(
+                    snapshot_id="init", components={}
+                )
+
+            # 2. Revert Logic
+            new_snapshot_id = str(uuid.uuid4())
+            new_components = copy.deepcopy(target_snapshot.components)
+
+            new_snapshot = StateSnapshot(
+                snapshot_id=new_snapshot_id,
+                components=new_components,
+                checksum=compute_checksum(new_components),
+                is_checkpoint=True,
+                parent_id=None,
+            )
+
+            diffs = compute_state_diff(
+                current_snapshot.components, new_components
+            )
+
+            result = ExecutionResult(
+                request_id=str(uuid.uuid4()),
+                action_id="system.revert",
+                status=ExecutionStatus.SUCCESS,
+                message=f"Reverted state to snapshot {snapshot_id}",
+                state_snapshot_id=new_snapshot_id,
+                state_diff=diffs,
+            )
+
+            # 3. Persistence
+            self.repository.save_execution_and_snapshot(
+                project_id, result, new_snapshot, is_checkpoint=True
+            )
+
+            # 4. Dispatch Side Effects
+            self._dispatch_post_execution(project_id, result)
+
+            return result
+
+    def reconstruct_state(
+        self,
+        project_id: str,
+        target_request_id: Optional[str] = None,
+        target_timestamp: Optional[datetime] = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Reconstructs the state by replaying diffs from the audit log.
+
+        This method starts from the earliest snapshot and applies all
+        successful execution diffs sequentially.
+
+        Args:
+            project_id: The ID of the project.
+            target_request_id: If provided, stop replay after this request.
+            target_timestamp: If provided, stop replay at this time.
+
+        Returns:
+            The reconstructed components dictionary.
+        """
+        # 1. Fetch all successful executions for this project, ordered by time
+        history = self.repository.get_execution_history(
+            project_id, limit=10000
+        )
+        # Ordered by timestamp desc in repo, so reverse it
+        history = list(reversed(history))
+
+        # 2. Start with an empty state (or the first snapshot if we had a checkpoint system)
+        reconstructed_state: dict[str, dict[str, Any]] = {}
+
+        for entry in history:
+            if entry.status != ExecutionStatus.SUCCESS:
+                continue
+
+            # Apply diffs to reconstructed_state
+            for diff in entry.state_diff:
+                path_parts = diff.path.split(".")
+                comp_id = path_parts[0]
+
+                if comp_id not in reconstructed_state:
+                    reconstructed_state[comp_id] = {}
+
+                # Simplified path application (only handles component level or one nested level)
+                # In a real system, this would be a recursive path update.
+                if len(path_parts) == 1:
+                    if diff.op == "add" or diff.op == "replace":
+                        reconstructed_state[comp_id] = diff.value or {}
+                    elif diff.op == "remove":
+                        reconstructed_state.pop(comp_id, None)
+                elif len(path_parts) == 2:
+                    attr = path_parts[1]
+                    if diff.op == "add" or diff.op == "replace":
+                        reconstructed_state[comp_id][attr] = diff.value
+                    elif diff.op == "remove":
+                        reconstructed_state[comp_id].pop(attr, None)
+
+            # Stop conditions
+            if target_request_id and entry.request_id == target_request_id:
+                break
+            if target_timestamp:
+                entry_ts = entry.timestamp
+                if entry_ts.tzinfo is None:
+                    from datetime import timezone
+
+                    entry_ts = entry_ts.replace(tzinfo=timezone.utc)
+
+                target_ts = target_timestamp
+                if target_ts.tzinfo is None:
+                    from datetime import timezone
+
+                    target_ts = target_ts.replace(tzinfo=timezone.utc)
+
+                if entry_ts > target_ts:
+                    break
+
+        return reconstructed_state
+
+    def _create_rejection(
+        self,
+        project_id: str,
+        intent: ChatIntent,
+        message: str,
+        code: str = "policy_violation",
+        snapshot_id: str = "unknown",
+        user_id: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+        cost: Optional[float] = None,
+    ) -> ExecutionResult:
+        """Helper to create AND PERSIST a REJECTED execution result.
+
+        Args:
+            project_id: The ID of the project context.
+            intent: The structured intent object that was rejected.
+            message: A human-readable explanation of why the intent was rejected.
+            code: A machine-readable error code. Defaults to 'policy_violation'.
+            snapshot_id: The ID of the state snapshot at the time of rejection.
+                Defaults to 'unknown'.
+            user_id: The ID of the user.
+            execution_time_ms: Execution duration.
+            cost: Cost of attempt.
+
+        Returns:
+            An ExecutionResult object with REJECTED status.
+        """
+        result = ExecutionResult(
+            request_id=intent.request_id,
+            user_id=user_id,
+            action_id=intent.action_id or "unknown",
+            status=ExecutionStatus.REJECTED,
+            message=message,
+            state_snapshot_id=snapshot_id,
+            intent=intent.model_dump(mode="json"),
+            error=ExecutionError(code=code, detail=message),
+            execution_time_ms=execution_time_ms,
+            cost=cost,
+        )
+
+        # Metrics
+        ENGINE_EXECUTION_TOTAL.labels(
+            status="rejected",
+            action_id=intent.action_id or "unknown",
+            project_id=project_id,
+        ).inc()
+
+        logger.warning(
+            f"Execution rejected: {message}",
+            extra={
+                "extra_fields": {
+                    "event": "execution_rejected",
+                    "request_id": intent.request_id,
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "action_id": intent.action_id,
+                    "error_code": code,
+                    "duration_ms": execution_time_ms,
+                }
+            },
+        )
+
+        try:
+            self.repository.save_execution(project_id, result)
+        except Exception:
+            # In case of DB error during rejection log, we shouldn't crash the rejection response
+            _ = None
+        return result
+
+    def _create_failure(
+        self,
+        project_id: str,
+        intent: ChatIntent,
+        message: str,
+        code: str = "handler_error",
+        snapshot_id: str = "unknown",
+        user_id: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+        cost: Optional[float] = None,
+    ) -> ExecutionResult:
+        """Helper to create AND PERSIST a FAILED execution result.
+
+        Args:
+            project_id: The ID of the project context.
+            intent: The structured intent object that failed.
+            message: A human-readable explanation of the failure.
+            code: A machine-readable error code. Defaults to 'handler_error'.
+            snapshot_id: The ID of the state snapshot at the time of failure.
+                Defaults to 'unknown'.
+            user_id: The ID of the user.
+            execution_time_ms: Execution duration.
+            cost: Cost of attempt.
+
+        Returns:
+            An ExecutionResult object with FAILED status.
+        """
+        result = ExecutionResult(
+            request_id=intent.request_id,
+            user_id=user_id,
+            action_id=intent.action_id or "unknown",
+            status=ExecutionStatus.FAILED,
+            message=message,
+            state_snapshot_id=snapshot_id,
+            intent=intent.model_dump(mode="json"),
+            error=ExecutionError(code=code, detail=message),
+            execution_time_ms=execution_time_ms,
+            cost=cost,
+        )
+
+        # Metrics
+        ENGINE_EXECUTION_TOTAL.labels(
+            status="failed",
+            action_id=intent.action_id or "unknown",
+            project_id=project_id,
+        ).inc()
+
+        logger.error(
+            f"Execution failed: {message}",
+            extra={
+                "extra_fields": {
+                    "event": "execution_failed",
+                    "request_id": intent.request_id,
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "action_id": intent.action_id,
+                    "error_code": code,
+                    "duration_ms": execution_time_ms,
+                }
+            },
+        )
+
+        try:
+            self.repository.save_execution(project_id, result)
+        except Exception:
+            _ = None
+        return result

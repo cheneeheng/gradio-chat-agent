@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/plan.schema.json",
+  "title": "ExecutionPlan",
+  "description": "A multi-step execution plan proposed by the agent.",
+  "type": "object",
+  "required": [
+    "plan_id",
+    "steps"
+  ],
+  "properties": {
+    "plan_id": {
+      "type": "string",
+      "description": "Unique identifier for this plan instance."
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered list of intents to execute.",
+      "minItems": 1,
+      "items": {
+        "$ref": "intent.schema.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}

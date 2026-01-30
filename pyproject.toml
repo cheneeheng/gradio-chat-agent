@@ -9,13 +9,36 @@ description = "Gradio app with a chatbot agent that controls the components with
 authors = [{ name = "ChenEeHeng", email = "eeheng.chen@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["gradio>=6.2.0,<7", "pip>=25.2", "pyyaml>=6.0.3"]
+dependencies = [
+    "alembic>=1.18.1",
+    "apscheduler>=3.11.2",
+    "authlib>=1.6.6",
+    "cryptography>=46.0.3",
+    "google-generativeai>=0.8.6",
+    "gradio>=6.2.0,<7",
+    "httpx>=0.28.1",
+    "huey>=2.6.0",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
+    "jsonschema>=4.26.0",
+    "openai>=2.14.0",
+    "pip>=25.2",
+    "playwright>=1.57.0",
+    "prometheus-client>=0.24.1",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.45",
+    "typer>=0.21.0",
+]
 
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: OS Independent",
 ]
+
+[project.scripts]
+gradio-agent = "gradio_chat_agent.cli:app"
 
 [project.optional-dependencies]
 dev = [

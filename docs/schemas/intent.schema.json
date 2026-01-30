@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/intent.schema.json",
+  "title": "ChatIntent",
+  "description": "Structured intent produced by the chat agent.",
+  "type": "object",
+  "required": ["type", "request_id", "timestamp"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "Type of intent being expressed.",
+      "enum": ["action_call", "clarification_request"]
+    },
+    "request_id": {
+      "type": "string",
+      "description": "Unique identifier for this intent."
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 timestamp when the intent was created.",
+      "format": "date-time"
+    },
+    "action_id": {
+      "type": "string",
+      "description": "Identifier of the action being requested.",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9]+)*$"
+    },
+    "execution_mode": {
+      "type": "string",
+      "description": "Execution mode under which this intent was generated.",
+      "enum": ["interactive", "assisted", "autonomous"]
+    },
+    "media": {
+      "type": "object",
+      "description": "Optional multimodal data associated with the intent.",
+      "properties": {
+        "type": { "type": "string", "enum": ["image", "document"] },
+        "data": { "type": "string", "description": "Base64 encoded content or URI." },
+        "mime_type": { "type": "string" }
+      },
+      "required": ["type", "data"]
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Inputs for the requested action."
+    },
+    "confirmed": {
+      "type": "boolean",
+      "description": "Whether the user has explicitly confirmed execution.",
+      "default": false
+    },
+    "question": {
+      "type": "string",
+      "description": "Clarifying question posed to the user."
+    },
+    "choices": {
+      "type": "array",
+      "description": "Optional list of choices presented to the user.",
+      "items": {
+        "type": "string",
+        "description": "Choice identifier or label."
+      },
+      "default": []
+    },
+    "trace": {
+      "type": "object",
+      "description": "Optional diagnostic metadata for debugging or analysis.",
+      "default": {}
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "action_call" } } },
+      "then": { "required": ["action_id", "inputs"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "clarification_request" } } },
+      "then": { "required": ["question"] }
+    }
+  ],
+  "additionalProperties": false
+}

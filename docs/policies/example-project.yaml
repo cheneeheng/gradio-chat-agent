@@ -1,0 +1,25 @@
+project_id: 42
+
+limits:
+  rate:
+    per_minute: 10
+    per_hour: 200
+  quota:
+    per_day: 1000
+  budget:
+    daily: 500
+
+approvals:
+  - min_cost: 20
+    required_role: admin
+
+action_budgets:
+  project.delete:
+    daily: 1
+  project.transfer_owner:
+    daily: 2
+
+execution_windows:
+  allowed:
+    - days: [mon, tue, wed, thu, fri]
+      hours: [08:00, 18:00]

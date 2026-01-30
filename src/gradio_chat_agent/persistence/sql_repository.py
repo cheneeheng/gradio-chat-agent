@@ -1,0 +1,1164 @@
+"""SQLAlchemy implementation of the StateRepository."""
+
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any, Optional
+
+from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy.orm import sessionmaker
+
+from gradio_chat_agent.models.enums import ExecutionStatus
+from gradio_chat_agent.models.execution_result import (
+    ExecutionError,
+    ExecutionResult,
+    StateDiffEntry,
+)
+from gradio_chat_agent.models.state_snapshot import StateSnapshot
+from gradio_chat_agent.persistence.models import (
+    ApiToken,
+    Base,
+    Execution,
+    Project,
+    ProjectLimits,
+    ProjectMembership,
+    Schedule,
+    SessionFact,
+    Snapshot,
+    User,
+    Webhook,
+)
+from gradio_chat_agent.persistence.repository import StateRepository
+from gradio_chat_agent.utils import SecretManager
+
+
+class SQLStateRepository(StateRepository):
+    """Production-ready SQL persistence layer."""
+
+    def __init__(self, database_url: str, auto_create_tables: bool = True):
+        """Initialize the repository with a database URL.
+
+        Args:
+            database_url: SQLAlchemy connection string.
+            auto_create_tables: If True, calls Base.metadata.create_all.
+                Set to False when using Alembic migrations.
+        """
+        self.engine = create_engine(database_url)
+        if auto_create_tables:
+            Base.metadata.create_all(self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine)
+        self.secrets = SecretManager()
+
+        # Ensure default project exists if we are auto-creating tables
+        if auto_create_tables:
+            self._ensure_project("default_project")
+
+    def _ensure_project(self, project_id: str):
+        """Ensures a project exists in the database.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if not project:
+                session.add(Project(id=project_id, name="Default Project"))
+                session.commit()
+
+    def get_latest_snapshot(self, project_id: str) -> Optional[StateSnapshot]:
+        """Retrieves the most recent state snapshot for a project.
+
+        Args:
+            project_id: The ID of the project to retrieve the snapshot for.
+
+        Returns:
+            The latest StateSnapshot, or None if the project has no history.
+        """
+        with self.SessionLocal() as session:
+            stmt = (
+                select(Snapshot)
+                .where(Snapshot.project_id == project_id)
+                .order_by(Snapshot.timestamp.desc())
+                .limit(1)
+            )
+            row = session.execute(stmt).scalar_one_or_none()
+            if not row:
+                return None
+
+            return self._reconstruct_snapshot(session, row)
+
+    def get_snapshot(self, snapshot_id: str) -> Optional[StateSnapshot]:
+        """Retrieves a specific state snapshot by ID.
+
+        Args:
+            snapshot_id: The unique ID of the snapshot.
+
+        Returns:
+            The StateSnapshot if found, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            row = session.get(Snapshot, snapshot_id)
+            if not row:
+                return None
+            return self._reconstruct_snapshot(session, row)
+
+    def _reconstruct_snapshot(self, session, row: Snapshot) -> StateSnapshot:
+        """Recursively reconstructs the full state for a snapshot row."""
+        if row.is_checkpoint:
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+                is_checkpoint=True,
+                parent_id=row.parent_id,
+            )
+
+        if not row.parent_id:
+            # Should not happen if is_checkpoint is False
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+                is_checkpoint=False,
+            )
+
+        parent_row = session.get(Snapshot, row.parent_id)
+        if not parent_row:
+            # Parent missing, return delta as is (fallback)
+            return StateSnapshot(
+                snapshot_id=row.id,
+                timestamp=row.timestamp,
+                components=row.components,
+                is_checkpoint=False,
+                parent_id=row.parent_id,
+            )
+
+        parent_snapshot = self._reconstruct_snapshot(session, parent_row)
+
+        # Apply delta (row.components stores the diff list in this case)
+        from gradio_chat_agent.models.execution_result import StateDiffEntry
+        from gradio_chat_agent.utils import apply_state_diff
+
+        diffs = [
+            StateDiffEntry(**d) for d in row.components["_delta"]["diffs"]
+        ]
+        full_components = apply_state_diff(parent_snapshot.components, diffs)
+
+        return StateSnapshot(
+            snapshot_id=row.id,
+            timestamp=row.timestamp,
+            components=full_components,
+            is_checkpoint=False,
+            parent_id=row.parent_id,
+        )
+
+    def save_snapshot(
+        self,
+        project_id: str,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
+    ):
+        """Persists a new state snapshot.
+
+        Args:
+            project_id: The ID of the project to save the snapshot for.
+            snapshot: The snapshot object to persist.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+
+            components_data = snapshot.components
+            if not is_checkpoint and parent_id:
+                # Store only the delta
+                parent_row = session.get(Snapshot, parent_id)
+                if parent_row:
+                    parent_full = self._reconstruct_snapshot(
+                        session, parent_row
+                    )
+                    from gradio_chat_agent.utils import compute_state_diff
+
+                    diffs = compute_state_diff(
+                        parent_full.components, snapshot.components
+                    )
+                    components_data = {
+                        "_delta": {
+                            "diffs": [d.model_dump(mode="json") for d in diffs]
+                        }
+                    }
+
+            db_snapshot = Snapshot(
+                id=snapshot.snapshot_id,
+                project_id=project_id,
+                timestamp=snapshot.timestamp,
+                components=components_data,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
+            )
+            session.add(db_snapshot)
+            session.commit()
+
+    def save_execution(self, project_id: str, result: ExecutionResult):
+        """Persists an execution result (audit log entry).
+
+        Args:
+            project_id: The ID of the project the execution belongs to.
+            result: The execution result object to persist.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+
+            # Serialize state_diff and error
+            state_diff_json = [
+                d.model_dump(mode="json") for d in result.state_diff
+            ]
+            error_json = (
+                result.error.model_dump(mode="json") if result.error else None
+            )
+
+            db_exec = Execution(
+                request_id=result.request_id,
+                project_id=project_id,
+                user_id=result.user_id,
+                action_id=result.action_id,
+                status=result.status,
+                timestamp=result.timestamp,
+                duration_ms=result.execution_time_ms,
+                cost=result.cost,
+                message=result.message,
+                state_snapshot_id=result.state_snapshot_id,
+                state_diff=state_diff_json,
+                intent=result.intent,
+                error=error_json,
+                metadata_=result.metadata,
+            )
+            session.add(db_exec)
+            session.commit()
+
+    def save_execution_and_snapshot(
+        self,
+        project_id: str,
+        result: ExecutionResult,
+        snapshot: StateSnapshot,
+        is_checkpoint: bool = True,
+        parent_id: Optional[str] = None,
+    ):
+        """Persists an execution result and a new state snapshot atomically.
+
+        Args:
+            project_id: The ID of the project.
+            result: The execution result object.
+            snapshot: The new state snapshot object.
+            is_checkpoint: Whether this is a full-state checkpoint.
+            parent_id: The ID of the previous snapshot.
+        """
+        with self.SessionLocal() as session:
+            # 1. Ensure project exists
+            project = session.get(Project, project_id)
+            if not project:
+                session.add(Project(id=project_id, name="Default Project"))
+
+            # 2. Save Snapshot
+            components_data = snapshot.components
+            if not is_checkpoint and parent_id:
+                parent_row = session.get(Snapshot, parent_id)
+                if parent_row:
+                    parent_full = self._reconstruct_snapshot(
+                        session, parent_row
+                    )
+                    from gradio_chat_agent.utils import compute_state_diff
+
+                    diffs = compute_state_diff(
+                        parent_full.components, snapshot.components
+                    )
+                    components_data = {
+                        "_delta": {
+                            "diffs": [d.model_dump(mode="json") for d in diffs]
+                        }
+                    }
+
+            db_snapshot = Snapshot(
+                id=snapshot.snapshot_id,
+                project_id=project_id,
+                timestamp=snapshot.timestamp,
+                components=components_data,
+                is_checkpoint=is_checkpoint,
+                parent_id=parent_id,
+            )
+            session.add(db_snapshot)
+
+            # 3. Save Execution
+            state_diff_json = [
+                d.model_dump(mode="json") for d in result.state_diff
+            ]
+            error_json = (
+                result.error.model_dump(mode="json") if result.error else None
+            )
+
+            db_exec = Execution(
+                request_id=result.request_id,
+                project_id=project_id,
+                user_id=result.user_id,
+                action_id=result.action_id,
+                status=result.status,
+                timestamp=result.timestamp,
+                duration_ms=result.execution_time_ms,
+                cost=result.cost,
+                message=result.message,
+                state_snapshot_id=result.state_snapshot_id,
+                state_diff=state_diff_json,
+                intent=result.intent,
+                error=error_json,
+                metadata_=result.metadata,
+            )
+            session.add(db_exec)
+
+            # 4. Commit both in a single transaction
+            session.commit()
+
+    def get_execution_history(
+        self, project_id: str, limit: int = 100
+    ) -> list[ExecutionResult]:
+        """Retrieves the recent execution history for a project.
+
+        Args:
+            project_id: The ID of the project to retrieve history for.
+            limit: Maximum number of records to return. Defaults to 100.
+
+        Returns:
+            A list of ExecutionResult objects, ordered by timestamp descending.
+        """
+        with self.SessionLocal() as session:
+            stmt = (
+                select(Execution)
+                .where(Execution.project_id == project_id)
+                .order_by(Execution.timestamp.desc())
+                .limit(limit)
+            )
+            rows = session.execute(stmt).scalars().all()
+
+            results = []
+            for row in rows:
+                diffs = [StateDiffEntry(**d) for d in row.state_diff]
+                error = ExecutionError(**row.error) if row.error else None
+
+                results.append(
+                    ExecutionResult(
+                        request_id=row.request_id,
+                        user_id=row.user_id,
+                        action_id=row.action_id,
+                        status=ExecutionStatus(row.status),
+                        timestamp=row.timestamp,
+                        execution_time_ms=row.duration_ms,
+                        cost=row.cost,
+                        message=row.message,
+                        state_snapshot_id=row.state_snapshot_id,
+                        state_diff=diffs,
+                        intent=row.intent,
+                        error=error,
+                        metadata=row.metadata_ or {},
+                    )
+                )
+            return results
+
+    def get_session_facts(
+        self, project_id: str, user_id: str
+    ) -> dict[str, Any]:
+        """Retrieves all session facts for a specific user and project.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+
+        Returns:
+            A dictionary of key-value facts stored for this user and project.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(SessionFact).where(
+                SessionFact.project_id == project_id,
+                SessionFact.user_id == user_id,
+            )
+            rows = session.execute(stmt).scalars().all()
+            return {row.key: row.value for row in rows}
+
+    def save_session_fact(
+        self, project_id: str, user_id: str, key: str, value: Any
+    ):
+        """Saves or updates a session fact.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+            key: The unique key for the fact.
+            value: The value to store for the fact.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+
+            stmt = select(SessionFact).where(
+                SessionFact.project_id == project_id,
+                SessionFact.user_id == user_id,
+                SessionFact.key == key,
+            )
+            existing = session.execute(stmt).scalar_one_or_none()
+
+            if existing:
+                existing.value = value
+            else:
+                session.add(
+                    SessionFact(
+                        project_id=project_id,
+                        user_id=user_id,
+                        key=key,
+                        value=value,
+                    )
+                )
+            session.commit()
+
+    def delete_session_fact(self, project_id: str, user_id: str, key: str):
+        """Deletes a session fact.
+
+        Args:
+            project_id: The ID of the project.
+            user_id: The ID of the user.
+            key: The key of the fact to remove.
+        """
+        with self.SessionLocal() as session:
+            stmt = delete(SessionFact).where(
+                SessionFact.project_id == project_id,
+                SessionFact.user_id == user_id,
+                SessionFact.key == key,
+            )
+            session.execute(stmt)
+            session.commit()
+
+    def get_project_limits(self, project_id: str) -> dict[str, Any]:
+        """Retrieves project limits and policy.
+
+        Args:
+            project_id: The ID of the project to retrieve limits for.
+
+        Returns:
+            A dictionary containing limit configuration and governance policies.
+        """
+        with self.SessionLocal() as session:
+            project_limits = session.get(ProjectLimits, project_id)
+            if project_limits and project_limits.raw_policy:
+                return project_limits.raw_policy
+            return {}
+
+    def set_project_limits(self, project_id: str, policy: dict[str, Any]):
+        """Sets project limits.
+
+        Args:
+            project_id: The ID of the project to update limits for.
+            policy: The policy dictionary containing limits configuration.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+            project_limits = session.get(ProjectLimits, project_id)
+            if not project_limits:
+                project_limits = ProjectLimits(project_id=project_id)
+                session.add(project_limits)
+
+            project_limits.raw_policy = policy
+            # Sync specific columns
+            if "limits" in policy and "rate" in policy["limits"]:
+                rate = policy["limits"]["rate"]
+                if "per_minute" in rate:
+                    project_limits.rate_limit_minute = rate["per_minute"]
+                if "per_hour" in rate:
+                    project_limits.rate_limit_hour = rate["per_hour"]
+
+            if "limits" in policy and "budget" in policy["limits"]:
+                if "daily" in policy["limits"]["budget"]:
+                    project_limits.daily_budget = policy["limits"]["budget"][
+                        "daily"
+                    ]
+
+            session.commit()
+
+    def count_recent_executions(
+        self,
+        project_id: str,
+        minutes: int,
+        status: Optional[ExecutionStatus] = None,
+    ) -> int:
+        """Counts executions in the last N minutes.
+
+        Args:
+            project_id: The ID of the project to count executions for.
+            minutes: The lookback time window in minutes.
+            status: Optional status to filter by.
+
+        Returns:
+            The number of executions found in the specified window.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        cutoff_naive = cutoff.replace(tzinfo=None)
+        with self.SessionLocal() as session:
+            stmt = (
+                select(func.count())
+                .select_from(Execution)
+                .where(
+                    Execution.project_id == project_id,
+                    Execution.timestamp >= cutoff_naive,
+                )
+            )
+            if status:
+                stmt = stmt.where(Execution.status == status.value)
+
+            return session.execute(stmt).scalar() or 0
+
+    def get_daily_budget_usage(self, project_id: str) -> float:
+        """Calculates the total cost of successful executions today.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            The sum of costs for all successful executions since midnight.
+        """
+        now = datetime.now(timezone.utc)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure cutoff is naive if timestamps are naive (which they are in models)
+        cutoff = midnight.replace(tzinfo=None)
+
+        with self.SessionLocal() as session:
+            stmt = select(Execution).where(
+                Execution.project_id == project_id,
+                Execution.timestamp >= cutoff,
+                Execution.status == "success",
+            )
+            rows = session.execute(stmt).scalars().all()
+
+            total = 0.0
+            for row in rows:
+                if row.metadata_:
+                    total += float(row.metadata_.get("cost", 0.0))
+            return total
+
+    def get_webhook(self, webhook_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a webhook configuration by ID.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+
+        Returns:
+            A dictionary containing webhook details.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if not webhook:
+                return None
+
+            # Decrypt secret
+            try:
+                secret = self.secrets.decrypt(webhook.secret)
+            except Exception:
+                # Fallback for plain text if migration just started
+                secret = webhook.secret
+
+            return {
+                "id": webhook.id,
+                "project_id": webhook.project_id,
+                "action_id": webhook.action_id,
+                "secret": secret,
+                "inputs_template": webhook.inputs_template,
+                "enabled": webhook.enabled,
+            }
+
+    def save_webhook(self, webhook: dict[str, Any]):
+        """Saves or updates a webhook configuration.
+
+        Args:
+            webhook: A dictionary containing webhook details.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(webhook["project_id"])
+
+            encrypted_secret = self.secrets.encrypt(webhook["secret"])
+
+            db_webhook = session.get(Webhook, webhook["id"])
+            if db_webhook:
+                db_webhook.action_id = webhook["action_id"]
+                db_webhook.secret = encrypted_secret
+                db_webhook.inputs_template = webhook.get("inputs_template")
+                db_webhook.enabled = webhook.get("enabled", True)
+            else:
+                db_webhook = Webhook(
+                    id=webhook["id"],
+                    project_id=webhook["project_id"],
+                    action_id=webhook["action_id"],
+                    secret=encrypted_secret,
+                    inputs_template=webhook.get("inputs_template"),
+                    enabled=webhook.get("enabled", True),
+                )
+                session.add(db_webhook)
+            session.commit()
+
+    def delete_webhook(self, webhook_id: str):
+        """Deletes a webhook configuration.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if webhook:
+                session.delete(webhook)
+                session.commit()
+
+    def rotate_webhook_secret(self, webhook_id: str, new_secret: str):
+        """Updates the secret for a webhook.
+
+        Args:
+            webhook_id: The unique identifier of the webhook.
+            new_secret: The new plain text secret to set.
+        """
+        with self.SessionLocal() as session:
+            webhook = session.get(Webhook, webhook_id)
+            if webhook:
+                encrypted_secret = self.secrets.encrypt(new_secret)
+                webhook.secret = encrypted_secret
+                session.commit()
+
+    def get_schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a schedule configuration by ID.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+
+        Returns:
+            A dictionary containing schedule details.
+        """
+        with self.SessionLocal() as session:
+            schedule = session.get(Schedule, schedule_id)
+            if not schedule:
+                return None
+            return {
+                "id": schedule.id,
+                "project_id": schedule.project_id,
+                "action_id": schedule.action_id,
+                "cron": schedule.cron,
+                "inputs": schedule.inputs,
+                "enabled": schedule.enabled,
+            }
+
+    def save_schedule(self, schedule: dict[str, Any]):
+        """Saves or updates a schedule configuration.
+
+        Args:
+            schedule: A dictionary containing schedule details.
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(schedule["project_id"])
+
+            db_schedule = session.get(Schedule, schedule["id"])
+            if db_schedule:
+                db_schedule.action_id = schedule["action_id"]
+                db_schedule.cron = schedule["cron"]
+                db_schedule.inputs = schedule.get("inputs")
+                db_schedule.enabled = schedule.get("enabled", True)
+            else:
+                db_schedule = Schedule(
+                    id=schedule["id"],
+                    project_id=schedule["project_id"],
+                    action_id=schedule["action_id"],
+                    cron=schedule["cron"],
+                    inputs=schedule.get("inputs"),
+                    enabled=schedule.get("enabled", True),
+                )
+                session.add(db_schedule)
+            session.commit()
+
+    def delete_schedule(self, schedule_id: str):
+        """Deletes a schedule configuration.
+
+        Args:
+            schedule_id: The unique identifier of the schedule.
+        """
+        with self.SessionLocal() as session:
+            schedule = session.get(Schedule, schedule_id)
+            if schedule:
+                session.delete(schedule)
+                session.commit()
+
+    def create_project(self, project_id: str, name: str):
+        """Creates a new project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            name: Human-readable name of the project.
+        """
+        with self.SessionLocal() as session:
+            project = Project(id=project_id, name=name)
+            session.add(project)
+            session.commit()
+
+    def is_project_archived(self, project_id: str) -> bool:
+        """Checks if a project is archived.
+
+        Args:
+            project_id: The ID of the project.
+
+        Returns:
+            True if the project is archived, False otherwise.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project and project.archived_at:
+                return True
+            return False
+
+    def archive_project(self, project_id: str):
+        """Archives a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project:
+                project.archived_at = datetime.now(UTC)
+                session.commit()
+
+    def purge_project(self, project_id: str):
+        """Permanently deletes a project and all associated data.
+
+        Args:
+            project_id: The unique identifier for the project.
+        """
+        with self.SessionLocal() as session:
+            project = session.get(Project, project_id)
+            if project:
+                session.delete(project)
+                session.commit()
+
+    def add_project_member(self, project_id: str, user_id: str, role: str):
+        """Adds a member to a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The role to assign (viewer, operator, admin).
+        """
+        with self.SessionLocal() as session:
+            self._ensure_project(project_id)
+            member = session.get(ProjectMembership, (project_id, user_id))
+            if not member:
+                member = ProjectMembership(
+                    project_id=project_id, user_id=user_id, role=role
+                )
+                session.add(member)
+            else:
+                member.role = role
+            session.commit()
+
+    def remove_project_member(self, project_id: str, user_id: str):
+        """Removes a member from a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+        """
+        with self.SessionLocal() as session:
+            member = session.get(ProjectMembership, (project_id, user_id))
+            if member:
+                session.delete(member)
+                session.commit()
+
+    def update_project_member_role(
+        self, project_id: str, user_id: str, role: str
+    ):
+        """Updates a member's role in a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+            user_id: The unique identifier for the user.
+            role: The new role to assign.
+        """
+        self.add_project_member(project_id, user_id, role)
+
+    def list_enabled_schedules(self) -> list[dict[str, Any]]:
+        """Lists all enabled schedules across all projects.
+
+        Returns:
+            A list of schedule dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Schedule).where(Schedule.enabled)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "action_id": row.action_id,
+                    "cron": row.cron,
+                    "inputs": row.inputs,
+                    "enabled": row.enabled,
+                }
+                for row in rows
+            ]
+
+    def get_project_members(self, project_id: str) -> list[dict[str, str]]:
+        """Retrieves all members of a project.
+
+        Args:
+            project_id: The unique identifier for the project.
+
+        Returns:
+            A list of dictionaries containing user_id and role.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(ProjectMembership).where(
+                ProjectMembership.project_id == project_id
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [{"user_id": row.user_id, "role": row.role} for row in rows]
+
+    def get_org_rollup(self) -> dict[str, Any]:
+        """Aggregates usage and execution stats across all projects.
+
+        Returns:
+            A dictionary containing platform-wide statistics.
+        """
+        with self.SessionLocal() as session:
+            # Get all projects
+            projects = session.execute(select(Project)).scalars().all()
+
+            projects_stats = {}
+            total_executions = 0
+            total_cost = 0.0
+
+            for project in projects:
+                # Execution counts
+                stmt = (
+                    select(Execution.status, func.count(Execution.id))
+                    .where(Execution.project_id == project.id)
+                    .group_by(Execution.status)
+                )
+
+                counts = dict(session.execute(stmt).all())
+                success_count = counts.get("success", 0)
+                failed_count = counts.get("failed", 0)
+                rejected_count = counts.get("rejected", 0)
+                project_total_execs = sum(counts.values())
+
+                # Total cost for this project
+                # In SQL we have a 'cost' column in Execution table
+                stmt_cost = select(func.sum(Execution.cost)).where(
+                    Execution.project_id == project.id,
+                    Execution.status == "success",
+                )
+                project_cost = session.execute(stmt_cost).scalar() or 0.0
+
+                projects_stats[project.id] = {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "total_executions": project_total_execs,
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "rejected_count": rejected_count,
+                    "total_cost": float(project_cost),
+                }
+                total_executions += project_total_execs
+                total_cost += float(project_cost)
+
+            return {
+                "total_projects": len(projects),
+                "total_executions": total_executions,
+                "total_cost": total_cost,
+                "projects": projects_stats,
+            }
+
+    def check_health(self) -> bool:
+        """Verifies database connection with a simple query."""
+        try:
+            with self.SessionLocal() as session:
+                session.execute(select(1))
+                return True
+        except Exception:
+            return False
+
+    def acquire_lock(
+        self, project_id: str, holder_id: str, timeout_seconds: int = 10
+    ) -> bool:
+        """Attempts to acquire a distributed lock in SQL."""
+        from gradio_chat_agent.persistence.models import Lock
+
+        with self.SessionLocal() as session:
+            now = datetime.now(UTC)
+            expires_at = now + timedelta(seconds=timeout_seconds)
+
+            # Check if lock exists
+            lock = session.get(Lock, project_id)
+
+            if lock:
+                # Check if expired or held by same holder
+                if (
+                    lock.expires_at is not None
+                    and lock.expires_at.replace(tzinfo=timezone.utc) < now
+                ) or lock.holder_id == holder_id:
+                    lock.holder_id = holder_id
+                    lock.acquired_at = now
+                    lock.expires_at = expires_at
+                    session.commit()
+                    return True
+                else:
+                    return False
+            else:
+                # Create new lock
+                new_lock = Lock(
+                    project_id=project_id,
+                    holder_id=holder_id,
+                    acquired_at=now,
+                    expires_at=expires_at,
+                )
+                session.add(new_lock)
+                try:
+                    session.commit()
+                    return True
+                except Exception:
+                    # Race condition: someone else might have inserted it
+                    session.rollback()
+                    return False
+
+    def release_lock(self, project_id: str, holder_id: str):
+        """Releases a distributed lock in SQL."""
+        from gradio_chat_agent.persistence.models import Lock
+
+        with self.SessionLocal() as session:
+            lock = session.get(Lock, project_id)
+            if lock and lock.holder_id == holder_id:
+                session.delete(lock)
+                session.commit()
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Lists all projects.
+
+        Returns:
+            A list of project dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Project)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "archived": row.archived_at is not None,
+                }
+                for row in rows
+            ]
+
+    def create_user(
+        self,
+        user_id: str,
+        password_hash: str,
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        organization_id: Optional[str] = None,
+    ):
+        """Creates a new user.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The hashed password.
+            full_name: Optional display name.
+            email: Optional contact email.
+            organization_id: Optional organization link.
+        """
+        with self.SessionLocal() as session:
+            user = User(
+                id=user_id,
+                password_hash=password_hash,
+                full_name=full_name,
+                email=email,
+                organization_id=organization_id,
+            )
+            session.add(user)
+            session.commit()
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Lists all users in the system.
+
+        Returns:
+            A list of user dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(User)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "password_hash": row.password_hash,
+                    "full_name": row.full_name,
+                    "email": row.email,
+                    "organization_id": row.organization_id,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+
+    def create_api_token(
+        self,
+        user_id: str,
+        name: str,
+        token_id: str,
+        expires_at: Optional[datetime] = None,
+    ):
+        """Creates a new API token for a user.
+
+        Args:
+            user_id: The ID of the owner.
+            name: A label for the token.
+            token_id: The unique token identifier.
+            expires_at: Optional expiration date.
+        """
+        with self.SessionLocal() as session:
+            db_token = ApiToken(
+                id=token_id, user_id=user_id, name=name, expires_at=expires_at
+            )
+            session.add(db_token)
+            session.commit()
+
+    def list_api_tokens(self, user_id: str) -> list[dict[str, Any]]:
+        """Lists all tokens for a user.
+
+        Args:
+            user_id: The ID of the user.
+
+        Returns:
+            A list of token dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(ApiToken).where(ApiToken.user_id == user_id)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "name": row.name,
+                    "created_at": row.created_at,
+                    "expires_at": row.expires_at,
+                    "revoked_at": row.revoked_at,
+                }
+                for row in rows
+            ]
+
+    def revoke_api_token(self, token_id: str):
+        """Revokes an API token.
+
+        Args:
+            token_id: The unique token identifier.
+        """
+        with self.SessionLocal() as session:
+            db_token = session.get(ApiToken, token_id)
+            if db_token:
+                db_token.revoked_at = datetime.now(UTC)
+                session.commit()
+
+    def validate_api_token(self, token_id: str) -> Optional[str]:
+        """Validates a token and returns the owner user_id if valid.
+
+        Args:
+            token_id: The unique token identifier.
+
+        Returns:
+            The user_id if valid and not expired/revoked, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            db_token = session.get(ApiToken, token_id)
+            if not db_token:
+                return None
+
+            if db_token.revoked_at:
+                return None
+
+            if db_token.expires_at:
+                if db_token.expires_at.replace(
+                    tzinfo=timezone.utc
+                ) < datetime.now(UTC):
+                    return None
+
+            return db_token.user_id
+
+    def delete_user(self, user_id: str):
+        """Permanently deletes a user.
+
+        Args:
+            user_id: The unique identifier for the user.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if user:
+                # Also clean up memberships (SQLAlchemy should handle this if relationship configured with cascade,
+                # but let's be explicit if not sure or just delete user if DB enforces FK)
+                stmt = delete(ProjectMembership).where(
+                    ProjectMembership.user_id == user_id
+                )
+                session.execute(stmt)
+                session.delete(user)
+                session.commit()
+
+    def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
+        """Retrieves a user by ID.
+
+        Args:
+            user_id: The unique identifier for the user.
+
+        Returns:
+            A dictionary containing user details if found, otherwise None.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if not user:
+                return None
+            return {
+                "id": user.id,
+                "password_hash": user.password_hash,
+                "full_name": user.full_name,
+                "email": user.email,
+                "organization_id": user.organization_id,
+                "created_at": user.created_at,
+            }
+
+    def update_user_password(self, user_id: str, password_hash: str):
+        """Updates a user's password.
+
+        Args:
+            user_id: The unique identifier for the user.
+            password_hash: The new hashed password.
+        """
+        with self.SessionLocal() as session:
+            user = session.get(User, user_id)
+            if user:
+                user.password_hash = password_hash
+                session.commit()
+
+    def list_webhooks(
+        self, project_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Lists all webhooks.
+
+        Args:
+            project_id: Optional project ID to filter by.
+
+        Returns:
+            A list of webhook dictionaries.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(Webhook)
+            if project_id:
+                stmt = stmt.where(Webhook.project_id == project_id)
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "project_id": row.project_id,
+                    "action_id": row.action_id,
+                    "enabled": row.enabled,
+                }
+                for row in rows
+            ]

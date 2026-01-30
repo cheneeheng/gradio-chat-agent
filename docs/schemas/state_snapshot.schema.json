@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gradio-chat-agent.local/schemas/state_snapshot.schema.json",
+  "title": "StateSnapshot",
+  "description": "Read-only snapshot of the current application state.",
+  "type": "object",
+  "required": ["snapshot_id", "timestamp", "components"],
+  "properties": {
+    "snapshot_id": {
+      "type": "string",
+      "description": "Unique identifier for this snapshot."
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 timestamp when the snapshot was taken.",
+      "format": "date-time"
+    },
+    "components": {
+      "type": "object",
+      "description": "Mapping from component_id to component state.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Component-specific state object."
+      }
+    }
+  },
+  "additionalProperties": false
+}
