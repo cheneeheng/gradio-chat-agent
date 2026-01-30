@@ -16,6 +16,7 @@ from fastapi import FastAPI, Response
 # Ensure src is in path
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+from gradio_chat_agent.chat.gemini_adapter import GeminiAgentAdapter
 from gradio_chat_agent.chat.openai_adapter import OpenAIAgentAdapter
 from gradio_chat_agent.execution.engine import ExecutionEngine
 from gradio_chat_agent.execution.scheduler import SchedulerWorker
@@ -159,7 +160,13 @@ def create_app() -> FastAPI:
     engine.add_post_execution_hook(alerting_service.check_execution_alerts)
 
     # 4. Setup Agent
-    adapter = OpenAIAgentAdapter()
+    llm_provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+    if llm_provider in ["gemini", "google"]:
+        logger.info("Using Gemini Agent Adapter")
+        adapter = GeminiAgentAdapter()
+    else:
+        logger.info("Using OpenAI Agent Adapter")
+        adapter = OpenAIAgentAdapter()
 
     # 5. Create FastAPI App
     from contextlib import asynccontextmanager

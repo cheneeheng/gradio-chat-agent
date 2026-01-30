@@ -15,9 +15,12 @@ The application relies on environment variables for sensitive credentials and in
 ### LLM Provider
 | Variable | Description | Required | Default |
 | :--- | :--- | :---: | :--- |
-| `OPENAI_API_KEY` | API Key for OpenAI (or compatible provider). | **Yes** | - |
+| `LLM_PROVIDER` | The LLM backend to use. Options: `openai`, `gemini` (or `google`). | No | `openai` |
+| `OPENAI_API_KEY` | API Key for OpenAI (or compatible provider). | Required if provider is `openai` | - |
 | `OPENAI_MODEL` | Model identifier to use for the agent. | No | `gpt-4o-mini` |
 | `OPENAI_API_BASE` | Base URL for the API (if using Azure or a local proxy). | No | `https://api.openai.com/v1` |
+| `GOOGLE_API_KEY` | API Key for Google Gemini. | Required if provider is `gemini` | - |
+| `GEMINI_MODEL` | Model identifier for Google Gemini. | No | `gemini-2.0-flash` |
 
 ### Gradio / Server
 | Variable | Description | Required | Default |
