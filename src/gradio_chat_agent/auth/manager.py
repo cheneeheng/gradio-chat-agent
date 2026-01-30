@@ -6,12 +6,14 @@ This module handles OIDC integration and session tracking.
 import os
 import time
 from typing import Optional
+
 from authlib.integrations.starlette_client import OAuth
 from authlib.jose import jwt
-from starlette.requests import Request
+from fastapi import FastAPI, HTTPException, status
+from fastapi.security import HTTPBearer
 from starlette.middleware.sessions import SessionMiddleware
-from fastapi import FastAPI, HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.requests import Request
+
 
 class AuthManager:
     """Manages OIDC authentication and sessions."""
@@ -20,14 +22,16 @@ class AuthManager:
         self.app = app
         self.oauth = OAuth()
         self.bearer_scheme = HTTPBearer(auto_error=False)
-        
+
         # OIDC Configuration
         self.issuer = os.environ.get("OIDC_ISSUER")
         self.client_id = os.environ.get("OIDC_CLIENT_ID")
         self.client_secret = os.environ.get("OIDC_CLIENT_SECRET")
         self.enabled = all([self.issuer, self.client_id, self.client_secret])
-        
-        self.secret_key = os.environ.get("SESSION_SECRET_KEY", "temporary-secret-key-for-sessions")
+
+        self.secret_key = os.environ.get(
+            "SESSION_SECRET_KEY", "temporary-secret-key-for-sessions"
+        )
 
         if self.enabled:
             self.oauth.register(
@@ -37,16 +41,16 @@ class AuthManager:
                 server_metadata_url=f"{self.issuer}/.well-known/openid-configuration",
                 client_kwargs={"scope": "openid profile email"},
             )
-            
-            # Add Session Middleware for Authlib/Starlette
-            self.app.add_middleware(SessionMiddleware, secret_key=self.secret_key)
+
+        # Add Session Middleware for Authlib/Starlette
+        self.app.add_middleware(SessionMiddleware, secret_key=self.secret_key)
 
     async def login(self, request: Request, redirect_uri: str):
         # ... (same as before)
         if not self.enabled:
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="OIDC is not configured."
+                detail="OIDC is not configured.",
             )
         return await self.oauth.oidc.authorize_redirect(request, redirect_uri)
 
@@ -55,7 +59,7 @@ class AuthManager:
         if not self.enabled:
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="OIDC is not configured."
+                detail="OIDC is not configured.",
             )
         token = await self.oauth.oidc.authorize_access_token(request)
         user = token.get("userinfo")
@@ -71,7 +75,7 @@ class AuthManager:
         payload = {
             "sub": user_id,
             "iat": int(time.time()),
-            "exp": int(time.time()) + 3600 * 24 # 24 hours
+            "exp": int(time.time()) + 3600 * 24,  # 24 hours
         }
         return jwt.encode(header, payload, self.secret_key).decode("utf-8")
 
@@ -90,15 +94,15 @@ class AuthManager:
         user = request.session.get("user")
         if user:
             return user
-            
+
         # 2. Check Bearer Token
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
             sub = self.validate_api_token(token)
             if sub:
-                return {"sub": sub, "name": sub} # Minimal profile
-                
+                return {"sub": sub, "name": sub}  # Minimal profile
+
         return None
 
     def logout(self, request: Request):
